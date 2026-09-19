@@ -1,0 +1,22 @@
+{
+  "schemaVersion": 1,
+  "policy": "dsh-plugin-naming/v1",
+  "plugin": {
+    "namespace": "dsh-vscode",
+    "name": "bridge",
+    "coordinate": "dsh-vscode/bridge",
+    "packageName": "dsh-vscode-bridge"
+  },
+  "names": {
+    "pluginNames": ["dsh-vscode-bridge"],
+    "loaderIds": ["dsh-vscode-bridge"],
+    "services": [],
+    "tools": [],
+    "commands": [],
+    "skills": [],
+    "skillProviders": [],
+    "events": [],
+    "settingsNamespaces": [],
+    "routes": []
+  }
+}
