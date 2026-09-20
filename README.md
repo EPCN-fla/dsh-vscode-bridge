@@ -159,7 +159,7 @@ dsh plugin --profile acp-vscode add /absolute/path/to/dsh-vscode-bridge
 | `permission.get` | `{ sessionId? }` | `{ options: [{ value, name, description? }], default, current? }` |
 | `permission.set` | `{ sessionId, name }` | `{ sessionId, current }` |
 | `workspace.list` | — | `{ workspaces: [{ id, path, title, sessionIds }], archivedSessionIds }` |
-| `workspace.attach` | `{ sessionId }` | `{ attached, workspaceId?, reason? }` |
+| `workspace.attach` | `{ sessionId }` | `{ attached, workspaceId?, reason? }`——活会话直接挂载；非活会话回退到存储态头按 cwd 校验挂载（覆盖 ACP 等进程外创建的会话） |
 
 订阅的 `types` 条目默认精确匹配；以 `/` 结尾时按前缀匹配（`plan/` 匹配 `plan/update`）；`*` 匹配全部。默认推送集合：`session/title`、`permission/preset`、`sandbox/mode`、`approval/policy`、`agent-preset/selected`、`plan/`、`todo/`。
 

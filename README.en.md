@@ -161,7 +161,7 @@ One JSON object per line, both directions, standard JSON-RPC 2.0 envelope.
 | `permission.get` | `{ sessionId? }` | `{ options: [{ value, name, description? }], default, current? }` |
 | `permission.set` | `{ sessionId, name }` | `{ sessionId, current }` |
 | `workspace.list` | — | `{ workspaces: [{ id, path, title, sessionIds }], archivedSessionIds }` |
-| `workspace.attach` | `{ sessionId }` | `{ attached, workspaceId?, reason? }` |
+| `workspace.attach` | `{ sessionId }` | `{ attached, workspaceId?, reason? }` — live sessions attach directly; non-live sessions fall back to the stored header and attach by cwd (covers sessions created out-of-process, e.g. over ACP) |
 
 Subscription `types` entries match exactly, or by prefix when they end in `/` (`plan/` matches `plan/update`); `*` matches everything. The default push set is `session/title`, `permission/preset`, `sandbox/mode`, `approval/policy`, `agent-preset/selected`, `plan/`, `todo/`.
 
