@@ -1,6 +1,6 @@
 {
   "name": "dsh-vscode-bridge",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "description": "Cordis plugin bridging the dsh-vscode extension to native DSH services (workspace grouping, session titles, archive, agent presets, permission presets) over a token-authenticated local JSON-RPC socket.",
   "keywords": [
     "dsh",
