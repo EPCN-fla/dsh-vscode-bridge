@@ -57,7 +57,7 @@ dsh plugin --profile acp-vscode add dsh-vscode-bridge
 ### 从 tarball 安装
 
 ```sh
-git clone <本仓库>
+git clone https://github.com/EPCN-fla/dsh-vscode-bridge.git
 cd dsh-vscode-bridge
 pnpm install
 pnpm run build
