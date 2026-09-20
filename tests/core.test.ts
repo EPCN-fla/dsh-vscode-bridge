@@ -400,6 +400,67 @@ test('attachSession groups by cwd, skips subagents and cwd-less sessions', async
   }
 })
 
+test('workspace.attach also attaches stored (non-live) sessions by header cwd', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'dsh-bridge-attach-stored-'))
+  try {
+    await withCore((deps, mocks) => {
+      // Entity behavior: attachSession prepends into sessionIds.
+      const originalCreate = mocks.workspaceRegistry.create
+      mocks.workspaceRegistry.create = async (path: string, title?: string) => {
+        const workspace = await originalCreate(path, title)
+        ;(workspace as { attachSession?: unknown }).attachSession = async (id: string) => {
+          mocks.calls.attach.push(id)
+          workspace.sessionIds.unshift(id)
+        }
+        return workspace
+      }
+      // Sessions created by a spawned ACP host are stored but never live here.
+      const stored = new Map<string, unknown>([
+        ['stored-1', { header: { version: 3, id: 'stored-1', createdAt: 1, isSeeded: false, cwd: root }, revision: 'r1' }],
+        ['stored-child', { header: { version: 3, id: 'stored-child', createdAt: 1, isSeeded: false, cwd: root, parentSession: 'stored-1' }, revision: 'r1' }],
+        ['stored-nocwd', { header: { version: 3, id: 'stored-nocwd', createdAt: 1, isSeeded: false }, revision: 'r1' }],
+      ])
+      ;(deps as unknown as Record<string, unknown>).sessionPersistence = {
+        stat: async (id: string) => stored.get(id),
+      }
+      mocks.live.set('live-1', makeSession('live-1', root))
+    }, async (core, mocks) => {
+      const client = new TestClient()
+      await client.connect(core.port as number)
+
+      // Live session: the pre-existing path still attaches.
+      const live = await client.request('workspace.attach', { sessionId: 'live-1' })
+      assert.equal((live.result as { attached: boolean }).attached, true)
+      assert.deepEqual(mocks.calls.attach, ['live-1'])
+
+      // Stored session: resolved through persistence, grouped by the same cwd.
+      const stored = await client.request('workspace.attach', { sessionId: 'stored-1' })
+      const storedResult = stored.result as { attached: boolean; workspaceId: string }
+      assert.equal(storedResult.attached, true)
+      assert.equal(storedResult.workspaceId, (live.result as { workspaceId: string }).workspaceId)
+      assert.deepEqual(mocks.calls.attach, ['live-1', 'stored-1'])
+
+      // Already a member: idempotent, no duplicate mutation.
+      const repeat = await client.request('workspace.attach', { sessionId: 'stored-1' })
+      assert.equal((repeat.result as { reason: string }).reason, 'already')
+
+      // Stored subagent and cwd-less sessions refuse like the live path.
+      const child = await client.request('workspace.attach', { sessionId: 'stored-child' })
+      assert.equal((child.result as { reason: string }).reason, 'subagent')
+      const noCwd = await client.request('workspace.attach', { sessionId: 'stored-nocwd' })
+      assert.equal((noCwd.result as { reason: string }).reason, 'no-cwd')
+
+      // Neither live nor stored: not found.
+      const missing = await client.request('workspace.attach', { sessionId: 'missing' })
+      assert.equal((missing.error as { data: { code: string } }).data.code, 'session/not-found')
+
+      client.close()
+    })
+  } finally {
+    await rm(root, { recursive: true, force: true })
+  }
+})
+
 test('degraded services report capabilities honestly', async () => {
   await withCore((deps) => {
     const mutable = deps as unknown as Record<string, unknown>

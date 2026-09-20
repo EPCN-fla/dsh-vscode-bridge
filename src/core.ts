@@ -10,7 +10,7 @@ import { randomBytes } from 'node:crypto'
 import type { AgentRegistry } from '@deepseek-ai/dsh-agent'
 import type { AgentPresets } from '@deepseek-ai/dsh-agent-presets'
 import type { PermissionPresetService } from '@deepseek-ai/dsh-permission-presets'
-import type { Session, SessionEvent, SessionId, SessionStore } from '@deepseek-ai/dsh-session'
+import type { Session, SessionEvent, SessionHeader, SessionId, SessionStore } from '@deepseek-ai/dsh-session'
 import type { SessionPersistence } from '@deepseek-ai/dsh-session-persistence'
 import type { SessionTitleService } from '@deepseek-ai/dsh-session-title'
 import type { WorkspaceRegistry } from '@deepseek-ai/dsh-workspace'
@@ -172,22 +172,32 @@ export class BridgeCore {
    * is logged and reported instead.
    */
   async attachSession(session: Session): Promise<{ attached: boolean; workspaceId?: string; reason?: string }> {
+    return await this.attachByHeader(session.id, session.header)
+  }
+
+  /**
+   * Shared attach core for live and stored sessions. Membership is decided by
+   * the immutable header cwd, so a persisted session created out-of-process
+   * (e.g. by a spawned ACP host) attaches exactly like a live one. Never
+   * throws, mirroring {@link attachSession}'s `session/created` contract.
+   */
+  private async attachByHeader(sessionId: SessionId, header: SessionHeader): Promise<{ attached: boolean; workspaceId?: string; reason?: string }> {
     const registry = this.deps.workspaceRegistry
     if (registry === undefined) return { attached: false, reason: 'workspace-unavailable' }
-    if (session.header.parentSession !== undefined) return { attached: false, reason: 'subagent' }
-    const cwd = session.header.cwd
+    if (header.parentSession !== undefined) return { attached: false, reason: 'subagent' }
+    const cwd = header.cwd
     if (cwd === undefined) return { attached: false, reason: 'no-cwd' }
     try {
       const workspace = (await registry.resolveByPath(cwd)) ?? (await registry.create(cwd))
-      if ((workspace.sessionIds as readonly string[]).includes(session.id)) {
+      if ((workspace.sessionIds as readonly string[]).includes(sessionId)) {
         return { attached: true, workspaceId: workspace.id, reason: 'already' }
       }
-      await workspace.attachSession(session.id)
-      this.deps.logger.info(`dsh-vscode-bridge: attached session ${session.id} to workspace ${workspace.id} (${workspace.path})`)
+      await workspace.attachSession(sessionId)
+      this.deps.logger.info(`dsh-vscode-bridge: attached session ${sessionId} to workspace ${workspace.id} (${workspace.path})`)
       await this.publishDiscovery()
       return { attached: true, workspaceId: workspace.id }
     } catch (error: unknown) {
-      this.deps.logger.warn(`dsh-vscode-bridge: cannot attach session ${session.id} (cwd ${cwd}): ${String(error)}`)
+      this.deps.logger.warn(`dsh-vscode-bridge: cannot attach session ${sessionId} (cwd ${cwd}): ${String(error)}`)
       return { attached: false, reason: String(error) }
     }
   }
@@ -504,8 +514,16 @@ export class BridgeCore {
 
   private async attachRequested(params: unknown): Promise<unknown> {
     const sessionId = requireString(params, 'sessionId')
-    const session = this.requireLiveSession(sessionId)
-    return await this.attachSession(session)
+    const live = this.deps.sessions.get(asSessionId(sessionId))
+    if (live !== undefined) return await this.attachSession(live)
+    // A session created out-of-process (e.g. by a spawned ACP host) is never
+    // live in this host; fall back to its stored header — membership is
+    // cwd-decided, so the attach validates identically.
+    const snapshot = await this.deps.sessionPersistence?.stat(asSessionId(sessionId))
+    if (snapshot === undefined) {
+      throw new BridgeRpcError(RPC_NOT_FOUND, `unknown session: ${sessionId}`, { code: 'session/not-found' })
+    }
+    return await this.attachByHeader(asSessionId(sessionId), snapshot.header)
   }
 
   // —— helpers ——
