@@ -2,7 +2,7 @@
 
 [中文](README.md) | English
 
-A plugin for [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness) (DSH) that gives the [dsh-vscode-lite](https://github.com/EPCN-fla/dsh-vscode-lite) a narrow, token-authenticated JSON-RPC channel into native DSH services — workspace grouping, session titles, session archive, agent presets, and permission presets.
+A plugin for [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness) (DSH) that gives the [dsh-vscode-lite](https://github.com/EPCN-fla/dsh-vscode-lite) a narrow, token-authenticated JSON-RPC channel into native DSH services — workspace grouping, session titles, session archive, agent presets, permission presets, slash commands, the skill catalog, and session-log export.
 
 The ACP surface is automation-only: titles, deletion, workspace grouping, presets, and permission modes never cross the ACP wire. With this plugin loaded, the extension talks to the harness's own services directly.
 
@@ -19,7 +19,10 @@ This plugin closes that gap from inside the harness process: a loopback TCP list
 - **Session delete**: product-level deletion through the registry-wide archive set (`workspaceRegistry.archiveSession`).
 - **Agent presets**: list the roster with the effective default, read a session's composed preset, switch blank sessions (`agent-preset/locked` once a turn has run — upstream contract).
 - **Permission presets**: query the option list plus a session's current preset, and switch it — sandbox mode and approval policy follow immediately.
-- **Event push**: subscribed clients receive `bridge.event` notifications for plan/todo/title/permission session events, with exact or prefix (`plan/`) type filters.
+- **Event push**: subscribed clients receive `bridge.event` notifications for plan/todo/title/permission/command-lifecycle session events, with exact or prefix (`plan/`, `command/`) type filters.
+- **Native slash commands**: list the commands effective for a session (`/compact`, `/plan`, …) and run them through `ctx.commands.execute` — the exact path the TUI/Web composers take — with `command/run` / `command/done` lifecycle events riding the push channel.
+- **Skill catalog**: read-only listing of project- and user-level skills (name, description, source, path); actual invocation stays with the model-side skill tool, whose catalog is injected inside DSH.
+- **Session-log export**: stream one session's logical log — subagent descendants and referenced attachments included — into a ZIP file on the host; archive bytes never cross the ndjson channel, so large logs stay memory-bounded.
 - **Honest capabilities**: `bridge.handshake` reports what this deployment can actually do; a missing optional service degrades one method family, never the whole plugin.
 
 ## How it works
@@ -162,10 +165,14 @@ One JSON object per line, both directions, standard JSON-RPC 2.0 envelope.
 | `permission.set` | `{ sessionId, name }` | `{ sessionId, current }` |
 | `workspace.list` | — | `{ workspaces: [{ id, path, title, sessionIds }], archivedSessionIds }` |
 | `workspace.attach` | `{ sessionId }` | `{ attached, workspaceId?, reason? }` — live sessions attach directly; non-live sessions fall back to the stored header and attach by cwd (covers sessions created out-of-process, e.g. over ACP) |
+| `command.list` | `{ sessionId }` | `{ commands: [{ name, description, inputHint?, attachments? }] }` — the native command catalog effective for that session's agent, sorted by name |
+| `command.run` | `{ sessionId, line, timeoutMs? }` | `{ commandId, kind: 'success' \| 'error', text?, sourceEventSeq? }` — `line` must start with `/`; handler-level failure arrives as `kind:'error'` with text, never as an RPC error |
+| `skill.list` | `{ sessionId? }` | `{ skills: [{ name, description, whenToUse?, source, provider, path? }] }` — with `sessionId`, project-level skills resolve against the session header cwd, otherwise the process cwd; an empty catalog is not an error |
+| `session.exportZip` | `{ sessionId, destPath? }` | `{ path, fileName, bytes, entries }` — writes the session-log ZIP (subagent descendants included) to `destPath` (default `<tmpdir>/dsh-session-export/<fileName>`); live sessions are flushed through the durability barrier first |
 
-Subscription `types` entries match exactly, or by prefix when they end in `/` (`plan/` matches `plan/update`); `*` matches everything. The default push set is `session/title`, `permission/preset`, `sandbox/mode`, `approval/policy`, `agent-preset/selected`, `plan/`, `todo/`.
+Subscription `types` entries match exactly, or by prefix when they end in `/` (`plan/` matches `plan/update`); `*` matches everything. The default push set is `session/title`, `permission/preset`, `sandbox/mode`, `approval/policy`, `agent-preset/selected`, `command/`, `plan/`, `todo/`.
 
-Error codes: standard JSON-RPC (`-32700` parse, `-32600` invalid request, `-32601` unknown method, `-32602` invalid params, `-32603` internal) plus `-32001` unauthorized (bad/missing token), `-32002` service unavailable in this profile, `-32004` session not found / not live, `-32009` conflict (carries upstream codes such as `agent-preset/locked` in `data.code`).
+Error codes: standard JSON-RPC (`-32700` parse, `-32600` invalid request, `-32601` unknown method, `-32602` invalid params, `-32603` internal) plus `-32000` server error (`data.code` such as `command/timeout`, `command/aborted`), `-32001` unauthorized (bad/missing token), `-32002` service unavailable in this profile, `-32004` session not found / not live, `-32009` conflict (carries upstream codes such as `agent-preset/locked` in `data.code`). An unresolvable `command.run` name additionally answers `-32602` with `data.code: 'command/unknown'`.
 
 ## Configuration
 
@@ -176,6 +183,7 @@ Error codes: standard JSON-RPC (`-32700` parse, `-32600` invalid request, `-3260
 | `token` | random per boot | Fixed bearer token, when reproducibility matters more than hygiene. |
 | `discoveryDir` | `$HOME/.dsh/vscode-bridge` | Discovery directory holding `<pid>.json`. |
 | `attachSessions` | `true` | Attach new sessions to their cwd's workspace on `session/created`. |
+| `commandTimeoutMs` | `180000` | `command.run` execution timeout; the in-flight command aborts past it and the RPC answers `command/timeout` (compact needs one LLM summarization, hence the generous default). |
 
 ## Known limitations
 
@@ -183,6 +191,10 @@ Error codes: standard JSON-RPC (`-32700` parse, `-32600` invalid request, `-3260
 - **"Delete" is archive**: the session disappears from every grouping surface, but its event log stays on disk. Physical deletion is not a public DSH API.
 - **Preset switching is blank-session only** (the upstream `agent-preset/locked` contract): once a turn has run, the composition is fixed.
 - **`agentPresets` is optional.** Without the `agent-presets` patch row the plugin still loads; `preset.*` then answers `service-unavailable` and the handshake reports `presets: false`.
+- **`commands`/`skills`/`sessionExport` are optional too.** When the ACP composition lacks the service rows the plugin still loads, the affected method family answers `service-unavailable`, and the handshake reports the flag as `false`; the archive module is only resolved lazily on first use, so an unresolvable module never affects plugin load.
+- **Export does not go through the Web `/export` command.** That command needs the `connection` service the ACP composition does not mount; the bridge bypasses the command layer, reuses the archive module directly, and has `session.exportZip` produce the ZIP file on the host (descendant logs included) without streaming bytes over ndjson.
+- **`command.run` is live-session only and attachment-free.** ACP has no staged-receipt channel, so attachments are always submitted empty; when a command declares it needs them, the upstream error text passes through verbatim as a `kind:'error'` result. Busy sessions are not pre-checked: compact reports `busy` itself, plan answers `queued`.
+- **`skill.list` is a read-only catalog.** Skills are actually invoked by the model-side skill tool (whose catalog is injected inside DSH); the bridge never triggers a skill on the model's behalf.
 - **Topology 3 (WSL extension host → Windows-hosted dsh) is out of scope** for the TCP channel: a Windows process does not publish a discovery file a WSL client can act on, and loopback does not cross that direction.
 - **Multiple instances on one machine coexist** via their own `<pid>.json` entries; when several entries match one folder, the extension picks the newest `startedAt`.
 

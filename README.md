@@ -2,7 +2,7 @@
 
 中文 | [English](README.en.md)
 
-适用于 [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness)（DSH）的插件：为 [dsh-vscode-lite](https://github.com/EPCN-fla/dsh-vscode-lite) 提供一条窄带、令牌鉴权的 JSON-RPC 通道，直通 DSH 原生服务——工作区分组、会话标题、会话删除、Agent 预设、权限预设。
+适用于 [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness)（DSH）的插件：为 [dsh-vscode-lite](https://github.com/EPCN-fla/dsh-vscode-lite) 提供一条窄带、令牌鉴权的 JSON-RPC 通道，直通 DSH 原生服务——工作区分组、会话标题、会话删除、Agent 预设、权限预设、斜杠指令、技能目录、会话日志导出。
 
 ACP 是纯自动化接口，标题、删除、工作区分组、预设、权限模式都不会出现在 ACP 协议上。装载本插件后，扩展可以直接调用 DSH 进程内的原生服务。
 
@@ -19,7 +19,10 @@ ACP 是纯自动化接口，标题、删除、工作区分组、预设、权限�
 - **会话删除**：经 registry 级归档集合实现产品级删除（`workspaceRegistry.archiveSession`）。
 - **Agent 预设**：列出预设名册（含生效的默认项）、读取会话当前预设、切换空白会话（会话开跑后返回 `agent-preset/locked`——上游契约）。
 - **权限预设**：查询选项列表与会话当前预设并切换——sandbox 模式与 approval 策略立即生效。
-- **事件推送**：订阅方收到 plan/todo/标题/权限等会话事件的 `bridge.event` 通知，类型过滤支持精确匹配与前缀匹配（`plan/`）。
+- **事件推送**：订阅方收到 plan/todo/标题/权限/指令生命周期等会话事件的 `bridge.event` 通知，类型过滤支持精确匹配与前缀匹配（`plan/`、`command/`）。
+- **原生斜杠指令**：列出会话生效的原生指令目录（`/compact`、`/plan` 等），并经 `ctx.commands.execute` 执行——与 TUI/Web 完全同一条路径，`command/run`、`command/done` 生命周期事件随推送到达。
+- **技能目录**：只读列出项目级与用户级技能（名称、描述、来源、路径）；技能的真正调用由模型侧 skill 工具完成，目录已在 DSH 内注入。
+- **会话日志导出**：把会话（含子代理后代）的逻辑日志与引用附件流式打包为宿主侧 ZIP 文件——字节不经 ndjson 通道，大日志内存有界。
 - **能力如实上报**：`bridge.handshake` 报告当前部署真实可用的能力；某个可选服务缺失只降级对应方法族，插件整体不受影响。
 
 ## 工作原理
@@ -31,7 +34,7 @@ flowchart LR
     Tcp --> Auth{token 校验}
     Auth -->|失败| Reject[-32001 unauthorized]
     Auth -->|通过| Core[BridgeCore 分发]
-    Core --> Svc[workspaceRegistry · sessionTitle<br/>agentPresets · permissionPresets]
+    Core --> Svc[workspaceRegistry · sessionTitle · commands<br/>agentPresets · permissionPresets · skills]
     Created[session/created] --> Attach[resolveByPath 或 create<br/>attachSession]
     Fire[session/event 事件流] --> Push[bridge.event 推送<br/>给匹配的订阅连接]
 ```
@@ -160,10 +163,14 @@ dsh plugin --profile acp-vscode add /absolute/path/to/dsh-vscode-bridge
 | `permission.set` | `{ sessionId, name }` | `{ sessionId, current }` |
 | `workspace.list` | — | `{ workspaces: [{ id, path, title, sessionIds }], archivedSessionIds }` |
 | `workspace.attach` | `{ sessionId }` | `{ attached, workspaceId?, reason? }`——活会话直接挂载；非活会话回退到存储态头按 cwd 校验挂载（覆盖 ACP 等进程外创建的会话） |
+| `command.list` | `{ sessionId }` | `{ commands: [{ name, description, inputHint?, attachments? }] }`——该会话 agent 生效的原生指令目录（按名排序） |
+| `command.run` | `{ sessionId, line, timeoutMs? }` | `{ commandId, kind: 'success' \| 'error', text?, sourceEventSeq? }`——`line` 须以 `/` 开头；处理器级失败以 `kind:'error'+text` 返回，不作 RPC 错误 |
+| `skill.list` | `{ sessionId? }` | `{ skills: [{ name, description, whenToUse?, source, provider, path? }] }`——传 `sessionId` 按会话头 cwd 解析项目级技能，否则用进程 cwd；无技能返回空数组 |
+| `session.exportZip` | `{ sessionId, destPath? }` | `{ path, fileName, bytes, entries }`——含子代理后代的会话日志 ZIP 落盘到 `destPath`（缺省 `<tmpdir>/dsh-session-export/<fileName>`）；活会话先做持久化屏障 |
 
-订阅的 `types` 条目默认精确匹配；以 `/` 结尾时按前缀匹配（`plan/` 匹配 `plan/update`）；`*` 匹配全部。默认推送集合：`session/title`、`permission/preset`、`sandbox/mode`、`approval/policy`、`agent-preset/selected`、`plan/`、`todo/`。
+订阅的 `types` 条目默认精确匹配；以 `/` 结尾时按前缀匹配（`plan/` 匹配 `plan/update`）；`*` 匹配全部。默认推送集合：`session/title`、`permission/preset`、`sandbox/mode`、`approval/policy`、`agent-preset/selected`、`command/`、`plan/`、`todo/`。
 
-错误码：标准 JSON-RPC（`-32700` 解析失败、`-32600` 非法请求、`-32601` 未知方法、`-32602` 参数错误、`-32603` 内部错误），另有 `-32001` 未授权（token 缺失或错误）、`-32002` 该 profile 中服务不可用、`-32004` 会话不存在/非活会话、`-32009` 冲突（`data.code` 携带上游错误码，如 `agent-preset/locked`）。
+错误码：标准 JSON-RPC（`-32700` 解析失败、`-32600` 非法请求、`-32601` 未知方法、`-32602` 参数错误、`-32603` 内部错误），另有 `-32000` 服务器错误（`data.code` 如 `command/timeout`、`command/aborted`）、`-32001` 未授权（token 缺失或错误）、`-32002` 该 profile 中服务不可用、`-32004` 会话不存在/非活会话、`-32009` 冲突（`data.code` 携带上游错误码，如 `agent-preset/locked`）。`command.run` 对未知名称另以 `-32602` + `data.code: 'command/unknown'` 应答。
 
 ## 配置
 
@@ -174,6 +181,7 @@ dsh plugin --profile acp-vscode add /absolute/path/to/dsh-vscode-bridge
 | `token` | 每次启动随机 | 固定令牌，需要可复现性多于卫生性时使用 |
 | `discoveryDir` | `$HOME/.dsh/vscode-bridge` | 发现目录，内含 `<pid>.json` |
 | `attachSessions` | `true` | 在 `session/created` 时把新会话 attach 到其 cwd 的工作区 |
+| `commandTimeoutMs` | `180000` | `command.run` 执行超时；到点 abort 在途指令并返回 `command/timeout`（compact 需一次 LLM 摘要，默认给足 3 分钟） |
 
 ## 已知限制
 
@@ -181,6 +189,10 @@ dsh plugin --profile acp-vscode add /absolute/path/to/dsh-vscode-bridge
 - **「删除」即归档**：会话从所有分组界面消失，但其事件日志仍保留在磁盘上。物理删除不是 DSH 的公开 API。
 - **预设切换仅限空白会话**（上游 `agent-preset/locked` 契约）：跑过一轮后组合即固定。
 - **`agentPresets` 是可选服务**。缺少 `agent-presets` patch 行时插件照常加载；此时 `preset.*` 返回 `service-unavailable`，握手如实报告 `presets: false`。
+- **`commands`/`skills`/`sessionExport` 同为可选能力**。ACP 组合缺对应服务行时插件照常装载，对应方法族返回 `service-unavailable`，握手能力位为 `false`；归档模块只在首次调用时动态解析，解析失败不影响插件装载。
+- **导出不走 Web 的 `/export` 指令**。该指令依赖 ACP 组合没有的 `connection` 服务；bridge 绕过指令层直接复用归档模块，由 `session.exportZip` 在宿主侧产出 ZIP 文件（含子代理后代日志），ZIP 字节不经 ndjson 通道。
+- **`command.run` 仅限活会话且不带附件**。ACP 侧没有暂存回执通道，附件恒以空数组提交；指令声明需要附件时，上游错误文本原样透传为 `kind:'error'` 结果。忙会话不预检：compact 自报 `busy`、plan 返回 `queued`。
+- **`skill.list` 是只读目录**。技能的实际调用由模型侧 skill 工具完成（目录已在 DSH 内注入），bridge 不代替模型触发技能。
 - **拓扑 3（WSL 扩展宿主 → Windows 侧 dsh）不在 TCP 通道覆盖范围内**：Windows 进程发布的发现文件对 WSL 客户端不可达，该方向上 loopback 也不互通。
 - **同机多实例按 `<pid>.json` 共存**，共用同一工作区目录的多个 DSH 进程各自发布条目；扩展在该目录的匹配条目中取 `startedAt` 最新者。
 
