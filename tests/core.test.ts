@@ -987,6 +987,23 @@ test('session.exportZip probes the archive module once and flips the capability 
     assert.equal((after.result as { capabilities: { sessionExport: boolean } }).capabilities.sessionExport, false)
     client.close()
   })
+
+  // A throwing loader is contained and degrades the same way.
+  await withCore((deps) => {
+    const mutable = deps as unknown as Record<string, unknown>
+    mutable.sessionPersistence = { stat: async () => undefined }
+    mutable.loadSessionLogExport = async () => {
+      throw new Error('loader boom')
+    }
+  }, async (core) => {
+    const client = new TestClient()
+    await client.connect(core.port as number)
+    const exported = await client.request('session.exportZip', { sessionId: 's1' })
+    assert.equal((exported.error as { code: number }).code, -32002)
+    const hello = await client.request('bridge.handshake')
+    assert.equal((hello.result as { capabilities: { sessionExport: boolean } }).capabilities.sessionExport, false)
+    client.close()
+  })
 })
 
 test('session.exportZip removes the partial file when the stream fails mid-write', async () => {

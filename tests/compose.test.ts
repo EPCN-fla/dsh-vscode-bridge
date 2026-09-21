@@ -25,9 +25,15 @@ test('the function plugin loads, serves, and unloads cleanly in a real Cordis co
     list: () => [],
     archivedSessionIds: [],
     resolveByPath: async () => undefined,
-    create: async () => {
-      throw new Error('not used')
-    },
+    create: async (path: string) => ({
+      id: 'ws-1',
+      path,
+      title: path,
+      sessionIds: [] as string[],
+      attachSession: async (id: string) => {
+        void id
+      },
+    }),
     archiveSession: async () => {},
   })
   ctx.provide('permissionPresets', {

@@ -764,15 +764,26 @@ export class BridgeCore {
     }
   }
 
-  /** First-call probe of the archive module, cached for the process lifetime. */
+  /**
+   * First-call probe of the archive module, cached for the process lifetime.
+   * The injected loader answers `undefined` for an unresolvable module (and
+   * logs the cause); a throwing loader is contained and logged here, so the
+   * probe can never break dispatch.
+   */
   private sessionLogExportModule(): Promise<SessionLogExportModule | undefined> {
-    this.sessionLogExportProbe ??= this.deps.loadSessionLogExport().then((module) => {
-      this.sessionLogExportResolved = module !== undefined
-      if (module === undefined) {
-        this.deps.logger.warn('dsh-vscode-bridge: @deepseek-ai/dsh-session-log-export is not resolvable; session.exportZip stays unavailable')
-      }
-      return module
-    })
+    this.sessionLogExportProbe ??= Promise.resolve()
+      .then(() => this.deps.loadSessionLogExport())
+      .then(
+        (module) => {
+          this.sessionLogExportResolved = module !== undefined
+          return module
+        },
+        (error: unknown) => {
+          this.sessionLogExportResolved = false
+          this.deps.logger.warn(`dsh-vscode-bridge: session log export probe failed: ${String(error)}`)
+          return undefined
+        },
+      )
     return this.sessionLogExportProbe
   }
 
