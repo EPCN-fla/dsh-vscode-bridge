@@ -56,6 +56,7 @@ export const RPC_METHOD_NOT_FOUND = -32601
 export const RPC_INVALID_PARAMS = -32602
 export const RPC_INTERNAL_ERROR = -32603
 // Server-defined codes (-32099..-32000).
+export const RPC_SERVER_ERROR = -32000
 export const RPC_UNAUTHORIZED = -32001
 export const RPC_SERVICE_UNAVAILABLE = -32002
 export const RPC_NOT_FOUND = -32004
@@ -90,6 +91,12 @@ export interface BridgeCapabilities {
   readonly presets: boolean
   /** Permission preset query/switch via `permissionPresets`. */
   readonly permissions: boolean
+  /** Native slash-command catalog and execution via `commands` (command.list / command.run). */
+  readonly commands: boolean
+  /** Read-only skill catalog via `skills` (skill.list). */
+  readonly skills: boolean
+  /** Session-log ZIP export to a host file via `session.exportZip`. */
+  readonly sessionExport: boolean
   /** Server-push `bridge.event` notifications for subscribed session events. */
   readonly eventPush: boolean
 }
@@ -135,6 +142,7 @@ export const DEFAULT_PUSH_TYPES: readonly string[] = [
   'sandbox/mode',
   'approval/policy',
   'agent-preset/selected',
+  'command/',
   'plan/',
   'todo/',
 ]

@@ -7,12 +7,20 @@
  */
 
 import { randomBytes } from 'node:crypto'
-import type { AgentRegistry } from '@deepseek-ai/dsh-agent'
+import { createWriteStream } from 'node:fs'
+import { mkdir, open, stat, unlink } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
+import { dirname, join } from 'node:path'
+import { Readable } from 'node:stream'
+import { pipeline } from 'node:stream/promises'
+import type { Agent, AgentRegistry } from '@deepseek-ai/dsh-agent'
 import type { AgentPresets } from '@deepseek-ai/dsh-agent-presets'
+import type { CommandRuntime } from '@deepseek-ai/dsh-commands'
 import type { PermissionPresetService } from '@deepseek-ai/dsh-permission-presets'
 import type { Session, SessionEvent, SessionHeader, SessionId, SessionStore } from '@deepseek-ai/dsh-session'
 import type { SessionPersistence } from '@deepseek-ai/dsh-session-persistence'
 import type { SessionTitleService } from '@deepseek-ai/dsh-session-title'
+import type { SkillRegistry, SkillViewOptions } from '@deepseek-ai/dsh-skill'
 import type { WorkspaceRegistry } from '@deepseek-ai/dsh-workspace'
 import { DiscoveryFile } from './discovery.ts'
 import {
@@ -27,6 +35,7 @@ import {
   RPC_METHOD_NOT_FOUND,
   RPC_NOT_FOUND,
   RPC_PARSE_ERROR,
+  RPC_SERVER_ERROR,
   RPC_SERVICE_UNAVAILABLE,
   RPC_UNAUTHORIZED,
   type BridgeCapabilities,
@@ -35,6 +44,18 @@ import {
   type JsonRpcRequest,
 } from './protocol.ts'
 import { BridgeTcpServer, type BridgeTransportLogger } from './server.ts'
+
+/**
+ * The lazily imported `@deepseek-ai/dsh-session-log-export` module. It is a
+ * devDependency for types only and deliberately absent from peerDependencies:
+ * a deployment that cannot resolve it degrades `session.exportZip` to
+ * `service-unavailable` without affecting plugin load.
+ */
+type SessionLogExportModule = typeof import('@deepseek-ai/dsh-session-log-export')
+/** Service bag the archive helpers read, sourced from injected/probed deps. */
+type SessionLogExportDeps = import('@deepseek-ai/dsh-session-log-export').SessionLogExportDeps
+/** The export services narrowed to the mounted ones the stream reads. */
+type SessionLogExportReady = import('@deepseek-ai/dsh-session-log-export').SessionLogExportReady
 
 /** Config with every optional field resolved (schema defaults applied). */
 export interface ResolvedBridgeConfig {
@@ -45,6 +66,8 @@ export interface ResolvedBridgeConfig {
   /** Directory holding the single `<pid>.json` discovery file. */
   readonly discoveryDir: string
   readonly attachSessions: boolean
+  /** Default `command.run` execution timeout; the request aborts past it. */
+  readonly commandTimeoutMs: number
 }
 
 /** The slice of harness services the bridge consumes. */
@@ -60,6 +83,20 @@ export interface BridgeCoreDeps {
   readonly agents?: AgentRegistry
   /** Lazy lookup: `agentPresets` is optional and resolved at request time. */
   readonly getAgentPresets: () => AgentPresets | undefined
+  /** Lazy lookup: `commands` is optional and resolved at request time. */
+  readonly getCommands: () => CommandRuntime | undefined
+  /** Lazy lookup: `skills` is optional and resolved at request time. */
+  readonly getSkills: () => SkillRegistry | undefined
+  /**
+   * Lazy probe for the `sessionQuery` engine. The bridge never calls it
+   * directly — it gates the `sessionExport` capability and is forwarded into
+   * the lazily imported archive module, whose own types validate the shape.
+   */
+  readonly getSessionQuery: () => SessionLogExportDeps['sessionQuery']
+  /** Lazy lookup for the `attachments` store forwarded into the archive module. */
+  readonly getAttachments: () => SessionLogExportDeps['attachments']
+  /** Lazy loader for the optional archive module; `undefined` when unresolvable. */
+  readonly loadSessionLogExport: () => Promise<SessionLogExportModule | undefined>
 }
 
 interface SubscriptionState {
@@ -80,9 +117,15 @@ export class BridgeCore {
   private readonly discovery: DiscoveryFile
   private server: BridgeTcpServer | undefined
   private readonly subscriptions = new Map<number, SubscriptionState>()
+  /** In-flight abortable RPC work (command executions, exports) per connection. */
+  private readonly inflight = new Map<number, Set<AbortController>>()
   private readonly startedAt = new Date().toISOString()
   private stopping = false
   private readonly deps: BridgeCoreDeps
+  /** Cached first-call probe of the archive module; tri-state via settlement. */
+  private sessionLogExportProbe: Promise<SessionLogExportModule | undefined> | undefined
+  /** Once probed, whether the archive module resolved (optimistic until then). */
+  private sessionLogExportResolved: boolean | undefined
 
   constructor(deps: BridgeCoreDeps) {
     this.deps = deps
@@ -111,6 +154,12 @@ export class BridgeCore {
       sessionArchive: this.deps.workspaceRegistry !== undefined,
       presets: this.deps.getAgentPresets() !== undefined,
       permissions: this.deps.permissionPresets !== undefined,
+      commands: this.deps.getCommands() !== undefined,
+      skills: this.deps.getSkills() !== undefined,
+      // Lightweight handshake check: the engine service gates the feature; the
+      // archive module probe happens on first call and a cached failure flips
+      // this to false on later handshakes.
+      sessionExport: this.deps.getSessionQuery() !== undefined && this.sessionLogExportResolved !== false,
       eventPush: true,
     }
   }
@@ -136,6 +185,7 @@ export class BridgeCore {
       },
       onConnectionClosed: (connectionId) => {
         this.subscriptions.delete(connectionId)
+        this.abortInflight(connectionId)
       },
     })
     try {
@@ -156,6 +206,7 @@ export class BridgeCore {
     this.stopping = true
     process.removeListener('exit', this.clearDiscoverySync)
     this.subscriptions.clear()
+    for (const connectionId of [...this.inflight.keys()]) this.abortInflight(connectionId)
     await this.server?.stop()
     this.server = undefined
     await this.discovery.clear()
@@ -314,6 +365,14 @@ export class BridgeCore {
         return this.listWorkspaces()
       case 'workspace.attach':
         return await this.attachRequested(params)
+      case 'command.list':
+        return this.listCommands(params)
+      case 'command.run':
+        return await this.runCommand(params, connectionId)
+      case 'skill.list':
+        return await this.listSkills(params)
+      case 'session.exportZip':
+        return await this.exportSessionZip(params, connectionId)
       default:
         throw new BridgeRpcError(RPC_METHOD_NOT_FOUND, `method not found: ${method}`)
     }
@@ -526,6 +585,207 @@ export class BridgeCore {
     return await this.attachByHeader(asSessionId(sessionId), snapshot.header)
   }
 
+  // —— command.* ——
+
+  private listCommands(params: unknown): unknown {
+    const sessionId = requireString(params, 'sessionId')
+    const commands = this.requireService(this.deps.getCommands(), 'commands')
+    const agent = this.requireLiveAgent(sessionId)
+    return {
+      // Trimmed mapping of the upstream descriptor view: `definitionId` is an
+      // unstable upstream surface and never crosses the wire.
+      commands: commands.list(agent).map((descriptor) => ({
+        name: descriptor.name,
+        description: descriptor.description,
+        ...(descriptor.input?.hint === undefined ? {} : { inputHint: descriptor.input.hint }),
+        ...(descriptor.input?.attachments === true ? { attachments: true } : {}),
+      })),
+    }
+  }
+
+  private async runCommand(params: unknown, connectionId: number): Promise<unknown> {
+    const sessionId = requireString(params, 'sessionId')
+    const line = requireString(params, 'line')
+    if (!line.startsWith('/')) {
+      throw new BridgeRpcError(RPC_INVALID_PARAMS, '`line` must be a slash command starting with `/`')
+    }
+    const timeoutMs = optionalNumber(params, 'timeoutMs') ?? this.deps.config.commandTimeoutMs
+    const commands = this.requireService(this.deps.getCommands(), 'commands')
+    const agent = this.requireLiveAgent(sessionId)
+    const controller = new AbortController()
+    const timer = setTimeout(() => {
+      controller.abort(new BridgeRpcError(
+        RPC_SERVER_ERROR,
+        `command did not settle within ${timeoutMs}ms`,
+        { code: 'command/timeout' },
+      ))
+    }, timeoutMs)
+    this.trackInflight(connectionId, controller)
+    try {
+      const aborted = new Promise<never>((_, reject) => {
+        controller.signal.addEventListener('abort', () => reject(controller.signal.reason), { once: true })
+      })
+      // The same execution path the TUI/Web composers take; `submittedAttachments`
+      // stays empty because ACP has no staged-receipt channel. The race answers
+      // the RPC at the timeout even when a handler never observes the signal.
+      const execution = await Promise.race([commands.execute(agent, line, [], controller.signal), aborted])
+      if (execution === undefined) {
+        throw new BridgeRpcError(RPC_INVALID_PARAMS, `unknown command: ${line}`, { code: 'command/unknown' })
+      }
+      // Result shape is always the upstream `CommandExecution.result`:
+      // handler-level failure (e.g. compact reporting `busy`) arrives as
+      // `kind: 'error'` with text, never as an RPC error.
+      return {
+        commandId: String(execution.commandId),
+        kind: execution.result.kind,
+        ...(execution.result.text === undefined ? {} : { text: execution.result.text }),
+        ...(execution.result.kind === 'success' && execution.result.sourceEventSeq !== undefined
+          ? { sourceEventSeq: execution.result.sourceEventSeq }
+          : {}),
+      }
+    } catch (error: unknown) {
+      if (error instanceof BridgeRpcError) throw error
+      if (controller.signal.aborted) {
+        const reason = controller.signal.reason
+        if (reason instanceof BridgeRpcError) throw reason
+        // The connection is gone; the abort only cancels upstream work.
+        throw new BridgeRpcError(RPC_SERVER_ERROR, `command aborted: ${String(reason)}`, { code: 'command/aborted' })
+      }
+      throw error
+    } finally {
+      clearTimeout(timer)
+      this.untrackInflight(connectionId, controller)
+    }
+  }
+
+  // —— skill.* ——
+
+  private async listSkills(params: unknown): Promise<unknown> {
+    const sessionId = optionalString(params, 'sessionId')
+    const skills = this.requireService(this.deps.getSkills(), 'skills')
+    // With a session id, project-level skills resolve against that session's
+    // header cwd; without one, against the process cwd.
+    const options: SkillViewOptions = sessionId === undefined
+      ? { cwd: process.cwd() }
+      : await this.skillLookupOptions(sessionId)
+    const summaries = await skills.list(options)
+    return {
+      // Only the stable catalog fields cross the wire; invocation policy,
+      // provider locators, and resource bases stay host-side.
+      skills: summaries.map((skill) => ({
+        name: skill.name,
+        description: skill.description,
+        ...(skill.whenToUse === undefined ? {} : { whenToUse: skill.whenToUse }),
+        source: skill.source,
+        provider: skill.provider,
+      })),
+    }
+  }
+
+  /** Header cwd of a live or stored session, for cwd-sensitive skill lookup. */
+  private async skillLookupOptions(sessionId: string): Promise<SkillViewOptions> {
+    const live = this.deps.sessions.get(asSessionId(sessionId))
+    if (live !== undefined) {
+      return live.header.cwd === undefined ? {} : { cwd: live.header.cwd }
+    }
+    const snapshot = await this.deps.sessionPersistence?.stat(asSessionId(sessionId))
+    if (snapshot === undefined) {
+      throw new BridgeRpcError(RPC_NOT_FOUND, `unknown session: ${sessionId}`, { code: 'session/not-found' })
+    }
+    return snapshot.header.cwd === undefined ? {} : { cwd: snapshot.header.cwd }
+  }
+
+  // —— session.exportZip ——
+
+  private async exportSessionZip(params: unknown, connectionId: number): Promise<unknown> {
+    const sessionId = requireString(params, 'sessionId')
+    const destPath = optionalString(params, 'destPath')
+    const sessionQuery = this.requireService(this.deps.getSessionQuery(), 'sessionQuery')
+    const persistence = this.requireService(this.deps.sessionPersistence, 'sessionPersistence')
+    const archive = await this.sessionLogExportModule()
+    if (archive === undefined) {
+      throw new BridgeRpcError(
+        RPC_SERVICE_UNAVAILABLE,
+        'session export module "@deepseek-ai/dsh-session-log-export" is not resolvable in this deployment',
+        { code: 'service-unavailable', service: 'session-log-export' },
+      )
+    }
+    const id = asSessionId(sessionId)
+    // Mirrors upstream `sessionLogExportDeps(ctx)` from the injected/probed
+    // services; a missing attachment store still exports attachment-free logs
+    // and fails loud the moment a log actually references one.
+    const deps: SessionLogExportReady = {
+      sessionQuery,
+      sessionPersistence: persistence,
+      attachments: this.deps.getAttachments() ?? missingAttachments,
+      sessions: this.deps.sessions,
+    }
+    const controller = new AbortController()
+    this.trackInflight(connectionId, controller)
+    let target: string | undefined
+    let completed = false
+    try {
+      // Durability barrier for a live session before its log is read; a cold
+      // id has no in-memory work and the flush is a no-op.
+      await archive.flushLiveSessionLog(deps, id, controller.signal)
+      const rootContent = await archive.readSessionLogText(persistence, id, controller.signal)
+      if (rootContent === undefined) {
+        throw new BridgeRpcError(RPC_NOT_FOUND, `unknown session: ${sessionId}`, { code: 'session/not-found' })
+      }
+      const fileName = archive.sessionLogZipFilename(sessionId)
+      target = destPath ?? join(tmpdir(), 'dsh-session-export', fileName)
+      await mkdir(dirname(target), { recursive: true })
+      // The ZIP never touches the ndjson channel (no base64): bytes stream
+      // straight to the host file, so large logs stay bounded in memory.
+      const stream = archive.streamSessionLogZip(
+        deps,
+        rootContent,
+        id,
+        true,
+        archive.DEFAULT_SESSION_LOG_COMPRESSION_LEVEL,
+        controller.signal,
+      )
+      await pipeline(Readable.fromWeb(stream), createWriteStream(target))
+      completed = true
+      const stats = await stat(target)
+      return { path: target, fileName, bytes: stats.size, entries: await zipEntryCount(target, stats.size) }
+    } catch (error: unknown) {
+      if (!completed && target !== undefined) {
+        await unlink(target).catch(() => {}) // never leave a truncated archive behind
+      }
+      if (error instanceof BridgeRpcError) throw error
+      if (controller.signal.aborted) {
+        throw new BridgeRpcError(RPC_SERVER_ERROR, `session export aborted: ${String(controller.signal.reason)}`, { code: 'session-export/aborted' })
+      }
+      throw error
+    } finally {
+      this.untrackInflight(connectionId, controller)
+    }
+  }
+
+  /**
+   * First-call probe of the archive module, cached for the process lifetime.
+   * The injected loader answers `undefined` for an unresolvable module (and
+   * logs the cause); a throwing loader is contained and logged here, so the
+   * probe can never break dispatch.
+   */
+  private sessionLogExportModule(): Promise<SessionLogExportModule | undefined> {
+    this.sessionLogExportProbe ??= Promise.resolve()
+      .then(() => this.deps.loadSessionLogExport())
+      .then(
+        (module) => {
+          this.sessionLogExportResolved = module !== undefined
+          return module
+        },
+        (error: unknown) => {
+          this.sessionLogExportResolved = false
+          this.deps.logger.warn(`dsh-vscode-bridge: session log export probe failed: ${String(error)}`)
+          return undefined
+        },
+      )
+    return this.sessionLogExportProbe
+  }
+
   // —— helpers ——
 
   private describeLive(session: Session): Record<string, unknown> {
@@ -562,6 +822,44 @@ export class BridgeCore {
       throw new BridgeRpcError(RPC_NOT_FOUND, `session is not live: ${sessionId}`, { code: 'session/not-live' })
     }
     return session
+  }
+
+  /**
+   * Resolve the live agent for one session: the same two-step lookup
+   * `preset.current` performs, with `-32004` for a non-live session and
+   * `-32009 session/no-agent` when the session has no running agent.
+   */
+  private requireLiveAgent(sessionId: string): Agent {
+    const session = this.requireLiveSession(sessionId)
+    const agent = this.deps.agents?.get(session.id)
+    if (agent === undefined) {
+      throw new BridgeRpcError(RPC_CONFLICT, `session ${sessionId} has no live agent`, { code: 'session/no-agent' })
+    }
+    return agent
+  }
+
+  private trackInflight(connectionId: number, controller: AbortController): void {
+    let set = this.inflight.get(connectionId)
+    if (set === undefined) {
+      set = new Set()
+      this.inflight.set(connectionId, set)
+    }
+    set.add(controller)
+  }
+
+  private untrackInflight(connectionId: number, controller: AbortController): void {
+    const set = this.inflight.get(connectionId)
+    if (set === undefined) return
+    set.delete(controller)
+    if (set.size === 0) this.inflight.delete(connectionId)
+  }
+
+  /** Abort every in-flight RPC of one closed connection. */
+  private abortInflight(connectionId: number): void {
+    const set = this.inflight.get(connectionId)
+    if (set === undefined) return
+    this.inflight.delete(connectionId)
+    for (const controller of set) controller.abort()
   }
 
   private requireService<T>(service: T | undefined, name: string): T {
@@ -679,4 +977,57 @@ function optionalStringArray(params: unknown, field: string): string[] | undefin
     throw new BridgeRpcError(RPC_INVALID_PARAMS, `\`${field}\` must be an array of non-empty strings when present`)
   }
   return value as string[]
+}
+
+/**
+ * Attachment-store stand-in for deployments without one. Attachment-free logs
+ * export normally; the first log referencing an attachment fails loud, never
+ * silently under-exports.
+ */
+const missingAttachments: SessionLogExportReady['attachments'] = {
+  readImage: () => {
+    throw new Error('service "attachments" is not available in this profile')
+  },
+  readFileStream: () => {
+    throw new Error('service "attachments" is not available in this profile')
+  },
+} as unknown as SessionLogExportReady['attachments']
+
+/** End Of Central Directory record signature and fixed length (sans comment). */
+const EOCD_SIGNATURE = 0x06054b50
+const EOCD_RECORD_LENGTH = 22
+/** The EOCD always sits within the last 22 + 65535 bytes (max comment). */
+const EOCD_SEARCH_WINDOW = EOCD_RECORD_LENGTH + 0xffff
+
+/**
+ * Count the entries of a freshly written ZIP by scanning its tail for the End
+ * Of Central Directory record. Only archives this process just produced are
+ * read, and fflate writes a plain EOCD (no comment), so the record is found
+ * immediately. ZIP64 archives (>= 0xFFFF entries, far beyond session-log
+ * exports) are out of scope.
+ */
+async function zipEntryCount(path: string, size: number): Promise<number> {
+  const handle = await open(path, 'r')
+  try {
+    const length = Math.min(size, EOCD_SEARCH_WINDOW)
+    const tail = Buffer.alloc(length)
+    await handle.read(tail, 0, length, size - length)
+    for (let offset = length - EOCD_RECORD_LENGTH; offset >= 0; offset -= 1) {
+      if (tail.readUInt32LE(offset) === EOCD_SIGNATURE) {
+        return tail.readUInt16LE(offset + 10)
+      }
+    }
+    throw new Error(`"${path}" is not a ZIP archive: end of central directory record missing`)
+  } finally {
+    await handle.close()
+  }
+}
+
+function optionalNumber(params: unknown, field: string): number | undefined {
+  const value = asRecord(params)[field]
+  if (value === undefined) return undefined
+  if (typeof value !== 'number' || !Number.isFinite(value) || value <= 0) {
+    throw new BridgeRpcError(RPC_INVALID_PARAMS, `\`${field}\` must be a positive finite number when present`)
+  }
+  return value
 }
