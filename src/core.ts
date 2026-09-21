@@ -678,7 +678,6 @@ export class BridgeCore {
         ...(skill.whenToUse === undefined ? {} : { whenToUse: skill.whenToUse }),
         source: skill.source,
         provider: skill.provider,
-        ...(skill.path === undefined ? {} : { path: skill.path }),
       })),
     }
   }

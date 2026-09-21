@@ -21,7 +21,7 @@ ACP 是纯自动化接口，标题、删除、工作区分组、预设、权限�
 - **权限预设**：查询选项列表与会话当前预设并切换——sandbox 模式与 approval 策略立即生效。
 - **事件推送**：订阅方收到 plan/todo/标题/权限/指令生命周期等会话事件的 `bridge.event` 通知，类型过滤支持精确匹配与前缀匹配（`plan/`、`command/`）。
 - **原生斜杠指令**：列出会话生效的原生指令目录（`/compact`、`/plan` 等），并经 `ctx.commands.execute` 执行——与 TUI/Web 完全同一条路径，`command/run`、`command/done` 生命周期事件随推送到达。
-- **技能目录**：只读列出项目级与用户级技能（名称、描述、来源、路径）；技能的真正调用由模型侧 skill 工具完成，目录已在 DSH 内注入。
+- **技能目录**：只读列出项目级与用户级技能（名称、描述、来源等稳定字段）；技能的真正调用由模型侧 skill 工具完成，目录已在 DSH 内注入。
 - **会话日志导出**：把会话（含子代理后代）的逻辑日志与引用附件流式打包为宿主侧 ZIP 文件——字节不经 ndjson 通道，大日志内存有界。
 - **能力如实上报**：`bridge.handshake` 报告当前部署真实可用的能力；某个可选服务缺失只降级对应方法族，插件整体不受影响。
 
@@ -165,7 +165,7 @@ dsh plugin --profile acp-vscode add /absolute/path/to/dsh-vscode-bridge
 | `workspace.attach` | `{ sessionId }` | `{ attached, workspaceId?, reason? }`——活会话直接挂载；非活会话回退到存储态头按 cwd 校验挂载（覆盖 ACP 等进程外创建的会话） |
 | `command.list` | `{ sessionId }` | `{ commands: [{ name, description, inputHint?, attachments? }] }`——该会话 agent 生效的原生指令目录（按名排序） |
 | `command.run` | `{ sessionId, line, timeoutMs? }` | `{ commandId, kind: 'success' \| 'error', text?, sourceEventSeq? }`——`line` 须以 `/` 开头；处理器级失败以 `kind:'error'+text` 返回，不作 RPC 错误 |
-| `skill.list` | `{ sessionId? }` | `{ skills: [{ name, description, whenToUse?, source, provider, path? }] }`——传 `sessionId` 按会话头 cwd 解析项目级技能，否则用进程 cwd；无技能返回空数组 |
+| `skill.list` | `{ sessionId? }` | `{ skills: [{ name, description, whenToUse?, source, provider }] }`——传 `sessionId` 按会话头 cwd 解析项目级技能，否则用进程 cwd；无技能返回空数组 |
 | `session.exportZip` | `{ sessionId, destPath? }` | `{ path, fileName, bytes, entries }`——含子代理后代的会话日志 ZIP 落盘到 `destPath`（缺省 `<tmpdir>/dsh-session-export/<fileName>`）；活会话先做持久化屏障 |
 
 订阅的 `types` 条目默认精确匹配；以 `/` 结尾时按前缀匹配（`plan/` 匹配 `plan/update`）；`*` 匹配全部。默认推送集合：`session/title`、`permission/preset`、`sandbox/mode`、`approval/policy`、`agent-preset/selected`、`command/`、`plan/`、`todo/`。

@@ -21,7 +21,7 @@ This plugin closes that gap from inside the harness process: a loopback TCP list
 - **Permission presets**: query the option list plus a session's current preset, and switch it — sandbox mode and approval policy follow immediately.
 - **Event push**: subscribed clients receive `bridge.event` notifications for plan/todo/title/permission/command-lifecycle session events, with exact or prefix (`plan/`, `command/`) type filters.
 - **Native slash commands**: list the commands effective for a session (`/compact`, `/plan`, …) and run them through `ctx.commands.execute` — the exact path the TUI/Web composers take — with `command/run` / `command/done` lifecycle events riding the push channel.
-- **Skill catalog**: read-only listing of project- and user-level skills (name, description, source, path); actual invocation stays with the model-side skill tool, whose catalog is injected inside DSH.
+- **Skill catalog**: read-only listing of project- and user-level skills (stable fields: name, description, source, …); actual invocation stays with the model-side skill tool, whose catalog is injected inside DSH.
 - **Session-log export**: stream one session's logical log — subagent descendants and referenced attachments included — into a ZIP file on the host; archive bytes never cross the ndjson channel, so large logs stay memory-bounded.
 - **Honest capabilities**: `bridge.handshake` reports what this deployment can actually do; a missing optional service degrades one method family, never the whole plugin.
 
@@ -167,7 +167,7 @@ One JSON object per line, both directions, standard JSON-RPC 2.0 envelope.
 | `workspace.attach` | `{ sessionId }` | `{ attached, workspaceId?, reason? }` — live sessions attach directly; non-live sessions fall back to the stored header and attach by cwd (covers sessions created out-of-process, e.g. over ACP) |
 | `command.list` | `{ sessionId }` | `{ commands: [{ name, description, inputHint?, attachments? }] }` — the native command catalog effective for that session's agent, sorted by name |
 | `command.run` | `{ sessionId, line, timeoutMs? }` | `{ commandId, kind: 'success' \| 'error', text?, sourceEventSeq? }` — `line` must start with `/`; handler-level failure arrives as `kind:'error'` with text, never as an RPC error |
-| `skill.list` | `{ sessionId? }` | `{ skills: [{ name, description, whenToUse?, source, provider, path? }] }` — with `sessionId`, project-level skills resolve against the session header cwd, otherwise the process cwd; an empty catalog is not an error |
+| `skill.list` | `{ sessionId? }` | `{ skills: [{ name, description, whenToUse?, source, provider }] }` — with `sessionId`, project-level skills resolve against the session header cwd, otherwise the process cwd; an empty catalog is not an error |
 | `session.exportZip` | `{ sessionId, destPath? }` | `{ path, fileName, bytes, entries }` — writes the session-log ZIP (subagent descendants included) to `destPath` (default `<tmpdir>/dsh-session-export/<fileName>`); live sessions are flushed through the durability barrier first |
 
 Subscription `types` entries match exactly, or by prefix when they end in `/` (`plan/` matches `plan/update`); `*` matches everything. The default push set is `session/title`, `permission/preset`, `sandbox/mode`, `approval/policy`, `agent-preset/selected`, `command/`, `plan/`, `todo/`.

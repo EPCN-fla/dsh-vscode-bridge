@@ -63,9 +63,12 @@ test('the function plugin loads, serves, and unloads cleanly in a real Cordis co
       : undefined),
   })
   ctx.provide('skills', {
-    list: async (options?: { cwd?: string }) => [
-      { name: 'pdf-tools', description: 'Read and write PDF files', source: 'project-dsh', provider: 'filesystem', invocation: { modelInvocable: true, userInvocable: true }, path: `${options?.cwd ?? ''}/.dsh/skills/pdf-tools/SKILL.md` },
-    ],
+    list: async (options?: { cwd?: string }) => {
+      void options
+      return [
+        { name: 'pdf-tools', description: 'Read and write PDF files', source: 'project-dsh', provider: 'filesystem', invocation: { modelInvocable: true, userInvocable: true } },
+      ]
+    },
   })
 
   const fiber = await ctx.plugin(plugin, {
@@ -121,7 +124,7 @@ test('the function plugin loads, serves, and unloads cleanly in a real Cordis co
     const skills = await roundTrip(payload as { port: number; token: string }, 'skill.list', (payload as { token: string }).token, { sessionId: 's1' })
     assert.deepEqual(skills.result, {
       skills: [
-        { name: 'pdf-tools', description: 'Read and write PDF files', source: 'project-dsh', provider: 'filesystem', path: `${workspace}/.dsh/skills/pdf-tools/SKILL.md` },
+        { name: 'pdf-tools', description: 'Read and write PDF files', source: 'project-dsh', provider: 'filesystem' },
       ],
     })
   } finally {

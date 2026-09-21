@@ -148,7 +148,6 @@ function makeMocks() {
             invocation: { modelInvocable: true, userInvocable: true },
             source: 'project-dsh',
             provider: 'filesystem',
-            path: '/tmp/project/.dsh/skills/pdf-tools/SKILL.md',
             resourceBase: { kind: 'directory', path: '/tmp/project/.dsh/skills/pdf-tools' },
           },
           { name: 'review', description: 'Code review checklist', invocation: { modelInvocable: true, userInvocable: false }, source: 'user-dsh', provider: 'filesystem' },
@@ -830,7 +829,6 @@ test('skill.list maps stable catalog fields and resolves the lookup cwd', async 
         whenToUse: 'When a PDF needs parsing',
         source: 'project-dsh',
         provider: 'filesystem',
-        path: '/tmp/project/.dsh/skills/pdf-tools/SKILL.md',
       },
       { name: 'review', description: 'Code review checklist', source: 'user-dsh', provider: 'filesystem' },
     ])
