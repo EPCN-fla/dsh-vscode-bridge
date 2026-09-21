@@ -10,6 +10,12 @@
  * 4. List and switch agent presets (`agentPresets`, optional).
  * 5. Query and switch permission presets (`permissionPresets`).
  * 6. Push session events (plan/todo/title/permission) to subscribed clients.
+ * 7. List and run native slash commands (`commands`, optional) — the same
+ *    execution path the TUI/Web composers take.
+ * 8. List the read-only skill catalog (`skills`, optional); invocation stays
+ *    with the model-side skill tool.
+ * 9. Export one session's log as a ZIP file on the host
+ *    (`session.exportZip`, lazily resolved archive module).
  *
  * Discovery: the listener seat (host/port) plus a bearer token are written to
  * `$HOME/.dsh/vscode-bridge/<pid>.json` (mode 0600) and removed on unload;
@@ -32,6 +38,8 @@ import type {} from '@deepseek-ai/dsh-session-title'
 import type {} from '@deepseek-ai/dsh-workspace'
 import type {} from '@deepseek-ai/dsh-permission-presets'
 import type {} from '@deepseek-ai/dsh-agent-presets'
+import type {} from '@deepseek-ai/dsh-commands'
+import type {} from '@deepseek-ai/dsh-skill'
 import { BridgeCore, type ResolvedBridgeConfig } from './core.ts'
 
 export const name = 'dsh-vscode-bridge'
@@ -67,6 +75,8 @@ export interface BridgePluginConfig {
   discoveryDir?: string
   /** Attach new sessions to their cwd's workspace on `session/created`. */
   attachSessions?: boolean
+  /** `command.run` execution timeout; the in-flight command aborts past it. */
+  commandTimeoutMs?: number
 }
 
 export const Config: Schema<BridgePluginConfig> = Schema.object({
@@ -76,6 +86,7 @@ export const Config: Schema<BridgePluginConfig> = Schema.object({
   token: Schema.string(),
   discoveryDir: Schema.string(),
   attachSessions: Schema.boolean().default(true),
+  commandTimeoutMs: Schema.natural().min(1).default(180000),
 })
 
 // Keep in sync with package.json#version (single source bump on release).
@@ -94,6 +105,7 @@ export function apply(ctx: Context, config: BridgePluginConfig): void {
     token: config.token ?? randomToken(),
     discoveryDir: config.discoveryDir ?? join(homedir(), '.dsh', 'vscode-bridge'),
     attachSessions: config.attachSessions ?? true,
+    commandTimeoutMs: config.commandTimeoutMs ?? 180000,
   }
   if (resolved.portEnd < resolved.portStart) {
     throw new Error(`dsh-vscode-bridge: portEnd (${resolved.portEnd}) is below portStart (${resolved.portStart})`)
@@ -110,6 +122,20 @@ export function apply(ctx: Context, config: BridgePluginConfig): void {
     permissionPresets: ctx.permissionPresets,
     agents: ctx.agents,
     getAgentPresets: () => ctx.get('agentPresets'),
+    getCommands: () => ctx.get('commands'),
+    getSkills: () => ctx.get('skills'),
+    // Probed without their type-merge packages: the bridge only forwards the
+    // values into the lazily imported archive module, which type-checks them.
+    getSessionQuery: () => ctx.get('sessionQuery'),
+    getAttachments: () => ctx.get('attachments'),
+    loadSessionLogExport: async () => {
+      try {
+        return await import('@deepseek-ai/dsh-session-log-export')
+      } catch (error: unknown) {
+        logger.warn(`dsh-vscode-bridge: cannot resolve @deepseek-ai/dsh-session-log-export: ${String(error)}`)
+        return undefined
+      }
+    },
   })
 
   ctx.on('session/created', (session) => {

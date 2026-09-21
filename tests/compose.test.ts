@@ -19,7 +19,6 @@ test('the function plugin loads, serves, and unloads cleanly in a real Cordis co
   const ctx = new Context()
 
   // Stand-ins under the real service keys declared in `inject`.
-  ctx.provide('sessions', { list: () => [], get: () => undefined })
   ctx.provide('sessionPersistence', { list: async () => [], stat: async () => undefined })
   ctx.provide('sessionTitle', { get: () => undefined, rename: () => ({ title: 't', updatedAt: 0 }) })
   ctx.provide('workspaceRegistry', {
@@ -38,7 +37,30 @@ test('the function plugin loads, serves, and unloads cleanly in a real Cordis co
     current: () => 'workspace-write',
     set: () => {},
   })
-  ctx.provide('agents', { get: () => undefined })
+  ctx.provide('agents', {
+    get: (id: string) => (id === 's1' ? { id, ctx: {} } : undefined),
+  })
+  // A live session with a cwd, for the command channel roundtrip.
+  const liveSession = {
+    id: 's1',
+    header: { version: 3, id: 's1', createdAt: 1, isSeeded: false, cwd: workspace },
+  }
+  ctx.provide('sessions', { list: () => [liveSession], get: (id: string) => (id === 's1' ? liveSession : undefined) })
+  // Stand-ins for the optional v0.1.3 services, under their real keys.
+  ctx.provide('commands', {
+    list: () => [
+      { name: 'compact', description: 'Compact the conversation', input: { hint: 'Optional focus' } },
+      { name: 'plan', description: 'Toggle plan mode' },
+    ],
+    execute: async (agent: { id: string }, line: string) => (line === '/plan'
+      ? { commandId: 'cmd-compose', result: { kind: 'success', text: `plan toggled for ${agent.id}` } }
+      : undefined),
+  })
+  ctx.provide('skills', {
+    list: async (options?: { cwd?: string }) => [
+      { name: 'pdf-tools', description: 'Read and write PDF files', source: 'project-dsh', provider: 'filesystem', invocation: { modelInvocable: true, userInvocable: true }, path: `${options?.cwd ?? ''}/.dsh/skills/pdf-tools/SKILL.md` },
+    ],
+  })
 
   const fiber = await ctx.plugin(plugin, {
     portStart: 47510,
@@ -69,6 +91,33 @@ test('the function plugin loads, serves, and unloads cleanly in a real Cordis co
 
     const workspaces = await roundTrip(payload as { port: number; token: string }, 'workspace.list', (payload as { token: string }).token)
     assert.deepEqual(workspaces.result, { workspaces: [], archivedSessionIds: [] })
+
+    // The v0.1.3 channels ride the same composition: capability flags on, then
+    // native command catalog/execution and the skill catalog roundtrip.
+    const capabilities = (hello.result as { capabilities: Record<string, boolean> }).capabilities
+    assert.equal(capabilities.commands, true)
+    assert.equal(capabilities.skills, true)
+
+    const listed = await roundTrip(payload as { port: number; token: string }, 'command.list', (payload as { token: string }).token, { sessionId: 's1' })
+    assert.deepEqual(listed.result, {
+      commands: [
+        { name: 'compact', description: 'Compact the conversation', inputHint: 'Optional focus' },
+        { name: 'plan', description: 'Toggle plan mode' },
+      ],
+    })
+
+    const ran = await roundTrip(payload as { port: number; token: string }, 'command.run', (payload as { token: string }).token, { sessionId: 's1', line: '/plan' })
+    assert.deepEqual(ran.result, { commandId: 'cmd-compose', kind: 'success', text: 'plan toggled for s1' })
+
+    const unknown = await roundTrip(payload as { port: number; token: string }, 'command.run', (payload as { token: string }).token, { sessionId: 's1', line: '/nope' })
+    assert.equal((unknown.error as { data: { code: string } }).data.code, 'command/unknown')
+
+    const skills = await roundTrip(payload as { port: number; token: string }, 'skill.list', (payload as { token: string }).token, { sessionId: 's1' })
+    assert.deepEqual(skills.result, {
+      skills: [
+        { name: 'pdf-tools', description: 'Read and write PDF files', source: 'project-dsh', provider: 'filesystem', path: `${workspace}/.dsh/skills/pdf-tools/SKILL.md` },
+      ],
+    })
   } finally {
     await fiber.dispose()
   }
@@ -81,6 +130,7 @@ async function roundTrip(
   discovery: { port: number },
   method: string,
   token: string,
+  params?: unknown,
 ): Promise<Record<string, unknown>> {
   const socket = createConnection({ host: '127.0.0.1', port: discovery.port })
   await new Promise<void>((resolve) => socket.once('connect', resolve))
@@ -92,7 +142,7 @@ async function roundTrip(
       if (newline >= 0) resolve(JSON.parse(buffer.slice(0, newline)))
     })
   })
-  socket.write(`${JSON.stringify({ jsonrpc: '2.0', id: 1, method, token })}\n`)
+  socket.write(`${JSON.stringify({ jsonrpc: '2.0', id: 1, method, token, ...(params === undefined ? {} : { params }) })}\n`)
   const message = await response
   socket.destroy()
   return message
