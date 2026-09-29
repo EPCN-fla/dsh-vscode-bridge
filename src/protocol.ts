@@ -65,7 +65,7 @@ export const RPC_CONFLICT = -32009
 /**
  * One failure the dispatcher answers with a structured wire error. `data.code`
  * carries stable machine-readable detail (for example `session/not-live`,
- * `agent-preset/locked`, `service-unavailable`).
+ * `session/active`, `agent-preset/locked`, `service-unavailable`).
  */
 export class BridgeRpcError extends Error {
   readonly code: number

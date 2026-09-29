@@ -155,7 +155,7 @@ One JSON object per line, both directions, standard JSON-RPC 2.0 envelope.
 | `session.list` | `{ includeStored? }` | `{ sessions: LiveSessionInfo[], storedIncluded, stored? }` |
 | `session.get` | `{ sessionId }` | live row, or a stored row with the folded title |
 | `session.setTitle` | `{ sessionId, title }` | `{ sessionId, title, updatedAt }` — live sessions only |
-| `session.delete` | `{ sessionId }` | `{ sessionId, archived: true }` |
+| `session.delete` | `{ sessionId }` | `{ sessionId, archived: true }` — a session with live activity (a running turn) is refused with `-32009 session/active` (DSH ≥ 0.1.7); an unknown session with `-32004 session/not-found` |
 | `session.subscribe` | `{ sessionId?, types? }` | `{ subscribed: true, types }`; events arrive as `bridge.event` notifications |
 | `session.unsubscribe` | — | `{ subscribed: false }` |
 | `preset.list` | — | `{ default, presets: [{ id, trust?, name?, description?, broken?, isDefault }] }` — `trust` (`'system' \| 'user'`) is only published by 0.1.5 hosts; upstream removed the field in 0.1.7 |

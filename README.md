@@ -153,7 +153,7 @@ dsh plugin --profile acp-vscode add /absolute/path/to/dsh-vscode-bridge
 | `session.list` | `{ includeStored? }` | `{ sessions: LiveSessionInfo[], storedIncluded, stored? }` |
 | `session.get` | `{ sessionId }` | 活会话行，或带折叠标题的存储态行 |
 | `session.setTitle` | `{ sessionId, title }` | `{ sessionId, title, updatedAt }`——仅限活会话 |
-| `session.delete` | `{ sessionId }` | `{ sessionId, archived: true }` |
+| `session.delete` | `{ sessionId }` | `{ sessionId, archived: true }`；有活动（运行中 turn）的会话以 `-32009 session/active` 拒绝（DSH ≥ 0.1.7），未知会话以 `-32004 session/not-found` 拒绝 |
 | `session.subscribe` | `{ sessionId?, types? }` | `{ subscribed: true, types }`；事件以 `bridge.event` 通知到达 |
 | `session.unsubscribe` | — | `{ subscribed: false }` |
 | `preset.list` | — | `{ default, presets: [{ id, trust?, name?, description?, broken?, isDefault }] }`——`trust`（`'system' \| 'user'`）仅 0.1.5 主机提供，0.1.7 起上游已移除该字段 |

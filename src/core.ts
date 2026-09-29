@@ -493,8 +493,16 @@ export class BridgeCore {
     try {
       await registry.archiveSession(asSessionId(sessionId))
     } catch (error: unknown) {
-      if ((error as { name?: string }).name === 'WorkspaceUnknownSessionError') {
+      const name = (error as { name?: string }).name
+      if (name === 'WorkspaceUnknownSessionError') {
         throw new BridgeRpcError(RPC_NOT_FOUND, `unknown session: ${sessionId}`, { code: 'session/not-found' })
+      }
+      // DSH 0.1.7 refuses to archive a session with live activity (a running
+      // turn). Surface a structured code so clients can offer stop-then-retry
+      // instead of parsing the upstream message; on 0.1.5 hosts the error
+      // class does not exist and this branch never matches.
+      if (name === 'WorkspaceActiveSessionError') {
+        throw new BridgeRpcError(RPC_CONFLICT, String((error as Error).message ?? error), { code: 'session/active' })
       }
       throw error
     }

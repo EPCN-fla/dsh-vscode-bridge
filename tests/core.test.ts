@@ -83,6 +83,11 @@ function makeMocks() {
           error.name = 'WorkspaceUnknownSessionError'
           throw error
         }
+        if (id === 'busy') {
+          const error = new Error(`cannot archive session '${id}': the session is active (turn)`)
+          error.name = 'WorkspaceActiveSessionError'
+          throw error
+        }
         calls.archive.push(id)
       },
     },
@@ -488,6 +493,11 @@ test('session.delete archives through the workspace registry', async () => {
     assert.deepEqual(mocks.calls.archive, ['s1'])
     const unknown = await client.request('session.delete', { sessionId: 'unknown' })
     assert.equal((unknown.error as { code: number }).code, -32004)
+    // DSH 0.1.7's WorkspaceActiveSessionError maps to a structured conflict.
+    const active = await client.request('session.delete', { sessionId: 'busy' })
+    const activeError = active.error as { code: number; data: { code: string } }
+    assert.equal(activeError.code, -32009)
+    assert.equal(activeError.data.code, 'session/active')
     client.close()
   })
 })
