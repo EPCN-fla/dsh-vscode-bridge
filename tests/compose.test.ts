@@ -70,6 +70,17 @@ test('the function plugin loads, serves, and unloads cleanly in a real Cordis co
       ]
     },
   })
+  // The 0.1.7-shaped preset registry stand-in: roster entries carry no
+  // `trust` (removed upstream with the declarative-preset split).
+  ctx.provide('agentPresets', {
+    defaultId: 'standard',
+    list: async () => [
+      { id: 'standard', name: 'Standard' },
+      { id: 'minimal', description: 'Minimal toolset' },
+    ],
+    composedPreset: () => 'standard',
+    select: async (_agent: unknown, presetId: string) => presetId,
+  })
 
   const fiber = await ctx.plugin(plugin, {
     portStart: 47510,
@@ -106,6 +117,8 @@ test('the function plugin loads, serves, and unloads cleanly in a real Cordis co
     const capabilities = (hello.result as { capabilities: Record<string, boolean> }).capabilities
     assert.equal(capabilities.commands, true)
     assert.equal(capabilities.skills, true)
+    assert.equal(capabilities.presets, true)
+    assert.equal(capabilities.permissions, true)
 
     const listed = await roundTrip(payload as { port: number; token: string }, 'command.list', (payload as { token: string }).token, { sessionId: 's1' })
     assert.deepEqual(listed.result, {
@@ -126,6 +139,39 @@ test('the function plugin loads, serves, and unloads cleanly in a real Cordis co
       skills: [
         { name: 'pdf-tools', description: 'Read and write PDF files', source: 'project-dsh', provider: 'filesystem' },
       ],
+    })
+
+    // The 0.1.7 preset channel: the trust-less roster roundtrips with the
+    // field omitted (never serialized as `undefined`).
+    const presets = await roundTrip(payload as { port: number; token: string }, 'preset.list', (payload as { token: string }).token)
+    assert.deepEqual(presets.result, {
+      default: 'standard',
+      presets: [
+        { id: 'standard', isDefault: true, name: 'Standard' },
+        { id: 'minimal', isDefault: false, description: 'Minimal toolset' },
+      ],
+    })
+
+    const permission = await roundTrip(payload as { port: number; token: string }, 'permission.get', (payload as { token: string }).token, { sessionId: 's1' })
+    assert.deepEqual(permission.result, {
+      options: [{ value: 'workspace-write', name: 'workspace-write' }],
+      default: 'workspace-write',
+      current: 'workspace-write',
+    })
+
+    const sessions = await roundTrip(payload as { port: number; token: string }, 'session.list', (payload as { token: string }).token)
+    assert.deepEqual(sessions.result, {
+      sessions: [{
+        sessionId: 's1',
+        live: true,
+        cwd: workspace,
+        createdAt: 1,
+        parentSession: null,
+        title: null,
+        permission: 'workspace-write',
+        agentPreset: 'standard',
+      }],
+      storedIncluded: false,
     })
   } finally {
     await fiber.dispose()

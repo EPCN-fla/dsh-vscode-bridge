@@ -37,7 +37,6 @@ import type {} from '@deepseek-ai/dsh-session-persistence'
 import type {} from '@deepseek-ai/dsh-session-title'
 import type {} from '@deepseek-ai/dsh-workspace'
 import type {} from '@deepseek-ai/dsh-permission-presets'
-import type {} from '@deepseek-ai/dsh-agent-presets'
 import type {} from '@deepseek-ai/dsh-commands'
 import type {} from '@deepseek-ai/dsh-skill'
 import { BridgeCore, type ResolvedBridgeConfig } from './core.ts'
@@ -90,7 +89,7 @@ export const Config: Schema<BridgePluginConfig> = Schema.object({
 })
 
 // Keep in sync with package.json#version (single source bump on release).
-const PLUGIN_VERSION = '0.1.3'
+const PLUGIN_VERSION = '0.2.0'
 
 /**
  * Mount the bridge. The Cordis wiring stays here; all behavior lives in

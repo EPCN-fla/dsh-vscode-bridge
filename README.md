@@ -46,9 +46,9 @@ flowchart LR
 
 ## 安装
 
-要求 deepseek-harness **0.1.5-rc.2**（`@deepseek-ai/dsh-*` 包 ≥ 0.1.5-rc.2）。
+兼容 deepseek-harness **0.1.5-rc.2** 与 **0.1.7-rc.1**（`@deepseek-ai/dsh-*` 包 ≥ 0.1.5-rc.2）。插件未在 `peerDependencies` 声明 DSH 包，因此不受 0.1.7 的安装/启动 peer 版本强制检查（DSH-0.1.7-J1-01）约束。
 
-插件要装进一个同时携带 `dsh-base` 与 `dsh-acp-app` 两个 bundle 的自建 profile。DSH 默认不带现成的 acp profile：`dsh plugin` 初始化出的自建 profile 只有 `dsh-base`，需要手动补上 `dsh-acp-app` bundle，以及 ACP 组合没有的几行服务（`workspace`、`agent-presets`，外加 `standard` 预设挂载所需的子代理模型路由宿主行）。
+插件要装进一个同时携带 `dsh-base` 与 `dsh-acp-app` 两个 bundle 的自建 profile。DSH 默认不带现成的 acp profile：`dsh plugin` 初始化出的自建 profile 只有 `dsh-base`，需要手动补上 `dsh-acp-app` bundle，以及 ACP 组合没有的几行服务（`workspace`、预设注册行，外加 `standard` 预设挂载所需的子代理模型路由宿主行）。预设注册行随主机版本不同：0.1.5 主机是 `agent-presets`（`@deepseek-ai/dsh-agent-presets`，`config.default` 指定默认预设）；0.1.7 主机预设改为声明式（DSH-0.1.7-J1-03），注册行是 `agent-preset-registry`（`@deepseek-ai/dsh-agent-preset-registry`，`config: { default: standard }`），每个预设另需一条 `@deepseek-ai/dsh-agent-preset` 声明行（可参考 web-app bundle 的 `presets/*.patch.yml`）。该服务未挂载时桥接照常加载，`presets` 能力降级为不可用。
 
 ### 从 npm 安装
 
@@ -153,10 +153,10 @@ dsh plugin --profile acp-vscode add /absolute/path/to/dsh-vscode-bridge
 | `session.list` | `{ includeStored? }` | `{ sessions: LiveSessionInfo[], storedIncluded, stored? }` |
 | `session.get` | `{ sessionId }` | 活会话行，或带折叠标题的存储态行 |
 | `session.setTitle` | `{ sessionId, title }` | `{ sessionId, title, updatedAt }`——仅限活会话 |
-| `session.delete` | `{ sessionId }` | `{ sessionId, archived: true }` |
+| `session.delete` | `{ sessionId }` | `{ sessionId, archived: true }`；有活动（运行中 turn）的会话以 `-32009 session/active` 拒绝（DSH ≥ 0.1.7），未知会话以 `-32004 session/not-found` 拒绝 |
 | `session.subscribe` | `{ sessionId?, types? }` | `{ subscribed: true, types }`；事件以 `bridge.event` 通知到达 |
 | `session.unsubscribe` | — | `{ subscribed: false }` |
-| `preset.list` | — | `{ default, presets: [{ id, trust, name?, description?, broken?, isDefault }] }` |
+| `preset.list` | — | `{ default, presets: [{ id, trust?, name?, description?, broken?, isDefault }] }`——`trust`（`'system' \| 'user'`）仅 0.1.5 主机提供，0.1.7 起上游已移除该字段 |
 | `preset.current` | `{ sessionId }` | `{ sessionId, preset }` |
 | `preset.select` | `{ sessionId, presetId }` | `{ sessionId, selected }`；会话开跑后以 `agent-preset/locked` 失败 |
 | `permission.get` | `{ sessionId? }` | `{ options: [{ value, name, description? }], default, current? }` |

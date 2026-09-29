@@ -83,6 +83,11 @@ function makeMocks() {
           error.name = 'WorkspaceUnknownSessionError'
           throw error
         }
+        if (id === 'busy') {
+          const error = new Error(`cannot archive session '${id}': the session is active (turn)`)
+          error.name = 'WorkspaceActiveSessionError'
+          throw error
+        }
         calls.archive.push(id)
       },
     },
@@ -452,10 +457,13 @@ test('session title, permission, and preset flows reach the native services', as
     assert.equal((badPermission.error as { code: number }).code, -32602)
 
     const presets = await client.request('preset.list')
-    const roster = presets.result as { default: string; presets: { id: string; isDefault: boolean }[] }
+    const roster = presets.result as { default: string; presets: { id: string; trust?: string; isDefault: boolean }[] }
     assert.equal(roster.default, 'standard')
     assert.equal(roster.presets.length, 2)
     assert.equal(roster.presets[0]?.isDefault, true)
+    // A host that still publishes `trust` (DSH ≤ 0.1.5) sees it on the wire.
+    assert.equal(roster.presets[0]?.trust, 'system')
+    assert.equal(roster.presets[1]?.trust, 'user')
 
     const selected = await client.request('preset.select', { sessionId: 's1', presetId: 'fast' })
     assert.equal((selected.result as { selected: string }).selected, 'fast')
@@ -485,6 +493,11 @@ test('session.delete archives through the workspace registry', async () => {
     assert.deepEqual(mocks.calls.archive, ['s1'])
     const unknown = await client.request('session.delete', { sessionId: 'unknown' })
     assert.equal((unknown.error as { code: number }).code, -32004)
+    // DSH 0.1.7's WorkspaceActiveSessionError maps to a structured conflict.
+    const active = await client.request('session.delete', { sessionId: 'busy' })
+    const activeError = active.error as { code: number; data: { code: string } }
+    assert.equal(activeError.code, -32009)
+    assert.equal(activeError.data.code, 'session/active')
     client.close()
   })
 })
@@ -669,6 +682,38 @@ test('degraded services report capabilities honestly', async () => {
     assert.equal((presetList.error as { code: number; data: { code: string } }).data.code, 'service-unavailable')
     const permission = await client.request('permission.get')
     assert.equal((permission.error as { code: number; data: { code: string } }).data.code, 'service-unavailable')
+    client.close()
+  })
+})
+
+test('preset.list tolerates a trust-less (DSH 0.1.7) roster', async () => {
+  await withCore((deps) => {
+    // The 0.1.7 AgentPresetRegistry roster entry carries no `trust` (removed
+    // upstream with the declarative-preset split, DSH-0.1.7-J1-03); the wire
+    // mapping must omit the field instead of serializing `undefined`.
+    const mutable = deps as unknown as Record<string, unknown>
+    mutable.getAgentPresets = () => ({
+      defaultId: 'standard',
+      list: async () => [
+        { id: 'standard', name: 'Standard' },
+        { id: 'ptc', description: 'PTC preset', broken: 'mount failed' },
+      ],
+      composedPreset: () => 'standard',
+      select: async (_agent: unknown, presetId: string) => presetId,
+    })
+  }, async (core) => {
+    const client = new TestClient()
+    await client.connect(core.port as number)
+    const hello = await client.request('bridge.handshake')
+    assert.equal((hello.result as { capabilities: Record<string, boolean> }).capabilities.presets, true)
+    const listed = await client.request('preset.list')
+    assert.deepEqual(listed.result, {
+      default: 'standard',
+      presets: [
+        { id: 'standard', isDefault: true, name: 'Standard' },
+        { id: 'ptc', isDefault: false, description: 'PTC preset', broken: 'mount failed' },
+      ],
+    })
     client.close()
   })
 })
