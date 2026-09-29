@@ -13,8 +13,8 @@ import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { Readable } from 'node:stream'
 import { pipeline } from 'node:stream/promises'
+import type { Context } from '@deepseek-ai/cordis'
 import type { Agent, AgentRegistry } from '@deepseek-ai/dsh-agent'
-import type { AgentPresets } from '@deepseek-ai/dsh-agent-presets'
 import type { CommandRuntime } from '@deepseek-ai/dsh-commands'
 import type { PermissionPresetService } from '@deepseek-ai/dsh-permission-presets'
 import type { Session, SessionEvent, SessionHeader, SessionId, SessionStore } from '@deepseek-ai/dsh-session'
@@ -57,6 +57,37 @@ type SessionLogExportDeps = import('@deepseek-ai/dsh-session-log-export').Sessio
 /** The export services narrowed to the mounted ones the stream reads. */
 type SessionLogExportReady = import('@deepseek-ai/dsh-session-log-export').SessionLogExportReady
 
+/**
+ * The wire-relevant shape of one agent-preset roster entry. `trust`
+ * (`'system' | 'user'`) existed through DSH 0.1.5 and was removed upstream in
+ * 0.1.7 when presets became declarative (DSH-0.1.7-J1-03); it crosses the
+ * wire only when the host still publishes it.
+ */
+export interface AgentPresetListEntry {
+  readonly id: string
+  readonly trust?: string
+  readonly name?: string
+  readonly description?: string
+  readonly broken?: string
+}
+
+/**
+ * Narrow structural slice of the host's `agentPresets` service. DSH 0.1.7
+ * replaces `@deepseek-ai/dsh-agent-presets` (`AgentPresets`) with
+ * `@deepseek-ai/dsh-agent-preset-registry` (`AgentPresetRegistry`)
+ * (DSH-0.1.7-J1-03/J1-16), but the service key and every method the bridge
+ * calls — `list`, `defaultId`, `composedPreset`, `select` — are unchanged,
+ * so typing the seam itself keeps the bridge compilable against either
+ * cohort. `Agent`/`Context` resolve from the installed DSH dependencies, so
+ * each side of the corridor type-checks against its own host types.
+ */
+export interface AgentPresetsSlice {
+  readonly defaultId: string
+  list(): Promise<readonly AgentPresetListEntry[]>
+  composedPreset(agentCtx: Context): string | undefined
+  select(agent: Agent, presetId: string): Promise<string>
+}
+
 /** Config with every optional field resolved (schema defaults applied). */
 export interface ResolvedBridgeConfig {
   readonly host: string
@@ -82,7 +113,7 @@ export interface BridgeCoreDeps {
   readonly permissionPresets?: PermissionPresetService
   readonly agents?: AgentRegistry
   /** Lazy lookup: `agentPresets` is optional and resolved at request time. */
-  readonly getAgentPresets: () => AgentPresets | undefined
+  readonly getAgentPresets: () => AgentPresetsSlice | undefined
   /** Lazy lookup: `commands` is optional and resolved at request time. */
   readonly getCommands: () => CommandRuntime | undefined
   /** Lazy lookup: `skills` is optional and resolved at request time. */
@@ -496,7 +527,9 @@ export class BridgeCore {
       default: defaultId,
       presets: roster.map((preset) => ({
         id: preset.id,
-        trust: preset.trust,
+        // `trust` left the upstream type in DSH 0.1.7; forward it only when
+        // the host still publishes it (see AgentPresetListEntry).
+        ...(preset.trust === undefined ? {} : { trust: preset.trust }),
         isDefault: preset.id === defaultId,
         ...(preset.name === undefined ? {} : { name: preset.name }),
         ...(preset.description === undefined ? {} : { description: preset.description }),
