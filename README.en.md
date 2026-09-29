@@ -46,9 +46,9 @@ flowchart LR
 
 ## Install
 
-Requires deepseek-harness **0.1.5-rc.2** (`@deepseek-ai/dsh-*` packages ≥ 0.1.5-rc.2).
+Compatible with deepseek-harness **0.1.5-rc.2** and **0.1.7-rc.1** (`@deepseek-ai/dsh-*` packages ≥ 0.1.5-rc.2). The plugin declares no DSH package in `peerDependencies`, so the 0.1.7 install/startup peer enforcement (DSH-0.1.7-J1-01) does not gate it.
 
-The plugin must be loaded into a custom profile carrying both the `dsh-base` and `dsh-acp-app` bundles. DSH ships no ready-made acp profile: a custom profile initialized by `dsh plugin` starts with `dsh-base` only, so you add the `dsh-acp-app` bundle by hand, plus the service rows the ACP composition does not ship (`workspace`, `agent-presets`, and the subagent model-route host row the `standard` preset mounts).
+The plugin must be loaded into a custom profile carrying both the `dsh-base` and `dsh-acp-app` bundles. DSH ships no ready-made acp profile: a custom profile initialized by `dsh plugin` starts with `dsh-base` only, so you add the `dsh-acp-app` bundle by hand, plus the service rows the ACP composition does not ship (`workspace`, the preset-registry row, and the subagent model-route host row the `standard` preset mounts). The preset-registry row depends on the host version: on 0.1.5 it is `agent-presets` (`@deepseek-ai/dsh-agent-presets`, with `config.default`); on 0.1.7 presets are declarative (DSH-0.1.7-J1-03) — the registry row is `agent-preset-registry` (`@deepseek-ai/dsh-agent-preset-registry`, `config: { default: standard }`) and each preset needs its own `@deepseek-ai/dsh-agent-preset` declaration row (see the web-app bundle's `presets/*.patch.yml`). Without the service the bridge still loads; its `presets` capability reports unavailable.
 
 ### From npm
 
@@ -158,7 +158,7 @@ One JSON object per line, both directions, standard JSON-RPC 2.0 envelope.
 | `session.delete` | `{ sessionId }` | `{ sessionId, archived: true }` |
 | `session.subscribe` | `{ sessionId?, types? }` | `{ subscribed: true, types }`; events arrive as `bridge.event` notifications |
 | `session.unsubscribe` | — | `{ subscribed: false }` |
-| `preset.list` | — | `{ default, presets: [{ id, trust, name?, description?, broken?, isDefault }] }` |
+| `preset.list` | — | `{ default, presets: [{ id, trust?, name?, description?, broken?, isDefault }] }` — `trust` (`'system' \| 'user'`) is only published by 0.1.5 hosts; upstream removed the field in 0.1.7 |
 | `preset.current` | `{ sessionId }` | `{ sessionId, preset }` |
 | `preset.select` | `{ sessionId, presetId }` | `{ sessionId, selected }`; fails with `agent-preset/locked` once the session has started |
 | `permission.get` | `{ sessionId? }` | `{ options: [{ value, name, description? }], default, current? }` |
