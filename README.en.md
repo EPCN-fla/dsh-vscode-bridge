@@ -90,7 +90,9 @@ First add the ACP app to the bundle list in `$DSH_HOME/profiles/acp-vscode/packa
 }
 ```
 
-Then register the plugin and the missing service rows in `cordis.patch.yml` next to it:
+Then register the plugin and the missing service rows in `cordis.patch.yml` next to it. The preset-registration rows depend on the host version — pick one by the output of `dsh --version`:
+
+**0.1.5 hosts**:
 
 ```yaml
 # Insert the rows the ACP composition does not ship.
@@ -108,7 +110,38 @@ Then register the plugin and the missing service rows in `cordis.patch.yml` next
     - id: dsh-vscode-bridge
       name: 'dsh-vscode-bridge'
       # config: { portStart: 7310, portEnd: 7319 }   # optional overrides
+```
 
+**0.1.7 hosts**:
+
+```yaml
+# Insert the rows the ACP composition does not ship.
+- insert:
+    - id: workspace
+      name: '@deepseek-ai/dsh-workspace'
+    # Presets are declarative since 0.1.7 (DSH-0.1.7-J1-03): a registry row
+    # plus one declaration row per preset.
+    - id: agent-preset-registry
+      name: '@deepseek-ai/dsh-agent-preset-registry'
+      config:
+        default: standard
+    - id: subagent-model-selection-settings
+      name: '@deepseek-ai/dsh-tool-subagent/model-selection-settings'
+    - id: dsh-vscode-bridge
+      name: 'dsh-vscode-bridge'
+      # config: { portStart: 7310, portEnd: 7319 }   # optional overrides
+
+# Preset declaration rows: copy the web-app bundle's
+# presets/{standard,ptc,minimal,cordis}.patch.yml verbatim (the npm package's
+# files field includes them; the extension 0.2.2+ install command writes
+# them for you).
+```
+
+A 0.1.7 host must not copy the 0.1.5 `agent-presets` row — the package was split and removed (DSH-0.1.7-J1-03); the row fails to import (entry-level failure), the `agentPresets` service goes missing, and the preset picker disappears.
+
+The optional permission-metadata block below is shared by both versions:
+
+```yaml
 # Optional: add display names and descriptions to the three permission
 # states (the base table carries only sandbox/approval, no name/description
 # metadata).
@@ -132,7 +165,7 @@ Then register the plugin and the missing service rows in `cordis.patch.yml` next
         description: Full file access without approval prompts.
 ```
 
-Finally point the extension at the profile by setting `dsh.profile` to `acp-vscode` (the extension's one-click install automates the whole sequence).
+Finally point the extension at the profile by setting `dsh.profile` to `acp-vscode` (the extension's one-click install automates the whole sequence). The extension 0.2.2+ installer picks the row set by the host's `dsh --version` and migrates profiles written by older installers (stripping the dead `agent-presets` row, adding the declaration rows, leaving a `.bak` backup) — hand-writing the YAML is only recommended when you customize.
 
 ## Wire protocol
 
@@ -190,7 +223,7 @@ Error codes: standard JSON-RPC (`-32700` parse, `-32600` invalid request, `-3260
 - **Rename and permission/preset switches require a live session.** A stored (not running) session must be resumed through ACP first; stored titles remain readable via `session.get`.
 - **"Delete" is archive**: the session disappears from every grouping surface, but its event log stays on disk. Physical deletion is not a public DSH API.
 - **Preset switching is blank-session only** (the upstream `agent-preset/locked` contract): once a turn has run, the composition is fixed.
-- **`agentPresets` is optional.** Without the `agent-presets` patch row the plugin still loads; `preset.*` then answers `service-unavailable` and the handshake reports `presets: false`.
+- **`agentPresets` is optional.** With the preset-registration rows missing (the 0.1.5 `agent-presets` row / the 0.1.7 `agent-preset-registry` + declaration rows) the plugin still loads; `preset.*` then answers `service-unavailable` and the handshake reports `presets: false`.
 - **`commands`/`skills`/`sessionExport` are optional too.** When the ACP composition lacks the service rows the plugin still loads, the affected method family answers `service-unavailable`, and the handshake reports the flag as `false`; the archive module is only resolved lazily on first use, so an unresolvable module never affects plugin load.
 - **Export does not go through the Web `/export` command.** That command needs the `connection` service the ACP composition does not mount; the bridge bypasses the command layer, reuses the archive module directly, and has `session.exportZip` produce the ZIP file on the host (descendant logs included) without streaming bytes over ndjson.
 - **`command.run` is live-session only and attachment-free.** ACP has no staged-receipt channel, so attachments are always submitted empty; when a command declares it needs them, the upstream error text passes through verbatim as a `kind:'error'` result. Busy sessions are not pre-checked: compact reports `busy` itself, plan answers `queued`.

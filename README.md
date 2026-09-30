@@ -90,7 +90,9 @@ dsh plugin --profile acp-vscode add /absolute/path/to/dsh-vscode-bridge
 }
 ```
 
-再在同目录的 `cordis.patch.yml` 中注册插件与缺失的服务行：
+再在同目录的 `cordis.patch.yml` 中注册插件与缺失的服务行。预设注册行随主机版本不同，按 `dsh --version` 的结果二选一：
+
+**0.1.5 主机**：
 
 ```yaml
 # 插入 acp 组合未携带的服务行
@@ -107,7 +109,35 @@ dsh plugin --profile acp-vscode add /absolute/path/to/dsh-vscode-bridge
     - id: dsh-vscode-bridge
       name: 'dsh-vscode-bridge'
       # config: { portStart: 7310, portEnd: 7319 }   # 可选覆盖
+```
 
+**0.1.7 主机**：
+
+```yaml
+# 插入 acp 组合未携带的服务行
+- insert:
+    - id: workspace
+      name: '@deepseek-ai/dsh-workspace'
+    # 0.1.7 起预设为声明式（DSH-0.1.7-J1-03）：注册行 + 每个预设一条声明行
+    - id: agent-preset-registry
+      name: '@deepseek-ai/dsh-agent-preset-registry'
+      config:
+        default: standard
+    - id: subagent-model-selection-settings
+      name: '@deepseek-ai/dsh-tool-subagent/model-selection-settings'
+    - id: dsh-vscode-bridge
+      name: 'dsh-vscode-bridge'
+      # config: { portStart: 7310, portEnd: 7319 }   # 可选覆盖
+
+# 预设声明行：整段复制 web-app bundle 的 presets/{standard,ptc,minimal,cordis}.patch.yml
+# （npm 包的 files 字段已包含；或直接用扩展 0.2.2+ 的安装命令，它会自动写入）
+```
+
+0.1.7 主机切勿照抄 0.1.5 的 `agent-presets` 行——该包已被拆分移除（DSH-0.1.7-J1-03），该行会 "failed to import"（条目级失败），`agentPresets` 服务缺失，预设选择器消失。
+
+下面的权限元数据块两个版本共用（可选）：
+
+```yaml
 # 可选：为三档权限补上显示名与描述（base 的默认表只有 sandbox/approval，
 # 没有 name/description 元数据）
 - id: permission
@@ -130,7 +160,7 @@ dsh plugin --profile acp-vscode add /absolute/path/to/dsh-vscode-bridge
         description: 完全文件访问，不再弹出批准。
 ```
 
-最后把扩展的 `dsh.profile` 设置为 `acp-vscode`（扩展的「一键安装 bridge」命令会自动完成上述全部步骤）。
+最后把扩展的 `dsh.profile` 设置为 `acp-vscode`（扩展的「一键安装 bridge」命令会自动完成上述全部步骤）。扩展 0.2.2+ 的安装器会按主机 `dsh --version` 自动选择行集，并迁移旧安装器写过的 profile（剥离失效的 `agent-presets` 行、补声明行、留 `.bak` 备份）；手抄 YAML 的路径只推荐给需要定制的用户。
 
 ## 通信协议
 
@@ -188,7 +218,7 @@ dsh plugin --profile acp-vscode add /absolute/path/to/dsh-vscode-bridge
 - **重命名与权限/预设切换要求活会话**。存储态（未运行）会话需先经 ACP resume；存储态标题仍可通过 `session.get` 读取。
 - **「删除」即归档**：会话从所有分组界面消失，但其事件日志仍保留在磁盘上。物理删除不是 DSH 的公开 API。
 - **预设切换仅限空白会话**（上游 `agent-preset/locked` 契约）：跑过一轮后组合即固定。
-- **`agentPresets` 是可选服务**。缺少 `agent-presets` patch 行时插件照常加载；此时 `preset.*` 返回 `service-unavailable`，握手如实报告 `presets: false`。
+- **`agentPresets` 是可选服务**。缺少预设注册行时（0.1.5 的 `agent-presets` 行 / 0.1.7 的 `agent-preset-registry` + 声明行）插件照常加载；此时 `preset.*` 返回 `service-unavailable`，握手如实报告 `presets: false`。
 - **`commands`/`skills`/`sessionExport` 同为可选能力**。ACP 组合缺对应服务行时插件照常装载，对应方法族返回 `service-unavailable`，握手能力位为 `false`；归档模块只在首次调用时动态解析，解析失败不影响插件装载。
 - **导出不走 Web 的 `/export` 指令**。该指令依赖 ACP 组合没有的 `connection` 服务；bridge 绕过指令层直接复用归档模块，由 `session.exportZip` 在宿主侧产出 ZIP 文件（含子代理后代日志），ZIP 字节不经 ndjson 通道。
 - **`command.run` 仅限活会话且不带附件**。ACP 侧没有暂存回执通道，附件恒以空数组提交；指令声明需要附件时，上游错误文本原样透传为 `kind:'error'` 结果。忙会话不预检：compact 自报 `busy`、plan 返回 `queued`。
