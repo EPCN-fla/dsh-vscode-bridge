@@ -134,8 +134,8 @@ Then register the plugin and the missing service rows in `cordis.patch.yml` next
 
 # Preset declaration rows: copy the web-app bundle's
 # presets/{standard,ptc,minimal,cordis}.patch.yml verbatim (the npm package's
-# files field includes them; the extension 0.2.2+ install command writes
-# them for you).
+# files field includes them; the extension's one-click install command
+# writes them for you).
 ```
 
 A 0.1.7 host must not copy the 0.1.5 `agent-presets` row — the package was split and removed (DSH-0.1.7-J1-03); the row fails to import (entry-level failure), the `agentPresets` service goes missing, and the preset picker disappears.
@@ -166,7 +166,7 @@ The optional permission-metadata block below is shared by both versions:
         description: Full file access without approval prompts.
 ```
 
-Finally point the extension at the profile by setting `dsh.profile` to `acp-vscode` (the extension's one-click install automates the whole sequence). The extension 0.2.2+ installer picks the row set by the host's `dsh --version` and migrates profiles written by older installers (stripping the dead `agent-presets` row, adding the declaration rows, leaving a `.bak` backup) — hand-writing the YAML is only recommended when you customize.
+Finally point the extension at the profile by setting `dsh.profile` to `acp-vscode` (the extension's one-click install automates the whole sequence: it picks the row set matching the host's `dsh --version` and migrates profiles written by older installers — stripping the dead `agent-presets` row, adding the declaration rows, leaving a `.bak` backup); hand-writing the YAML is only recommended when you customize.
 
 ## Wire protocol
 

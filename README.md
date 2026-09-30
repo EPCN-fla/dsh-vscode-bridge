@@ -131,7 +131,7 @@ dsh plugin --profile acp-vscode add /absolute/path/to/dsh-vscode-bridge
       # config: { portStart: 7310, portEnd: 7319 }   # 可选覆盖
 
 # 预设声明行：整段复制 web-app bundle 的 presets/{standard,ptc,minimal,cordis}.patch.yml
-# （npm 包的 files 字段已包含；或直接用扩展 0.2.2+ 的安装命令，它会自动写入）
+# （npm 包的 files 字段已包含；扩展的一键安装命令会自动写入）
 ```
 
 0.1.7 主机切勿照抄 0.1.5 的 `agent-presets` 行——该包已被拆分移除（DSH-0.1.7-J1-03），该行会 "failed to import"（条目级失败），`agentPresets` 服务缺失，预设选择器消失。
@@ -161,7 +161,7 @@ dsh plugin --profile acp-vscode add /absolute/path/to/dsh-vscode-bridge
         description: 完全文件访问，不再弹出批准。
 ```
 
-最后把扩展的 `dsh.profile` 设置为 `acp-vscode`（扩展的「一键安装 bridge」命令会自动完成上述全部步骤）。扩展 0.2.2+ 的安装器会按主机 `dsh --version` 自动选择行集，并迁移旧安装器写过的 profile（剥离失效的 `agent-presets` 行、补声明行、留 `.bak` 备份）；手抄 YAML 的路径只推荐给需要定制的用户。
+最后把扩展的 `dsh.profile` 设置为 `acp-vscode`（扩展的「一键安装 bridge」命令会自动完成上述全部步骤：按主机 `dsh --version` 选择对应版本的行集，并迁移旧安装器写过的 profile——剥离失效的 `agent-presets` 行、补声明行、留 `.bak` 备份）；手抄 YAML 的路径只推荐给需要定制的用户。
 
 ## 通信协议
 
