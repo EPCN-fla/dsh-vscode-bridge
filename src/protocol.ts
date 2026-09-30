@@ -101,6 +101,25 @@ export interface BridgeCapabilities {
   readonly eventPush: boolean
 }
 
+/** Result of `bridge.handshake`. */
+export interface BridgeHandshakeResult {
+  readonly protocolVersion: number
+  readonly plugin: typeof BRIDGE_PLUGIN_NAME
+  /** Bridge plugin version (this package's version). */
+  readonly version: string
+  /**
+   * Host DSH version (for example `0.1.7-rc.1`) when detectable — sourced
+   * from the launcher's `profileContext.installAnchor` (DSH ≥ 0.1.7), the
+   * CLI entry path, or plugin-local module resolution, in that order. Absent
+   * when no source applies (custom compositions, some packaged hosts);
+   * clients must treat the field as optional and never assume a default.
+   */
+  readonly dshVersion?: string
+  readonly pid: number
+  readonly startedAt: string
+  readonly capabilities: BridgeCapabilities
+}
+
 /**
  * Contents of `$HOME/.dsh/vscode-bridge/<pid>.json`. Deleted on plugin
  * unload; stale entries are reaped by the next instance that starts.
@@ -109,6 +128,8 @@ export interface DiscoveryFilePayload {
   readonly protocolVersion: number
   readonly plugin: typeof BRIDGE_PLUGIN_NAME
   readonly version: string
+  /** Host DSH version when detectable; see {@link BridgeHandshakeResult.dshVersion}. */
+  readonly dshVersion?: string
   readonly pid: number
   readonly host: string
   readonly port: number

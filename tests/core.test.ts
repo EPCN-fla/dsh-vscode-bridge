@@ -5,7 +5,7 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { createConnection, type Socket } from 'node:net'
-import { mkdtemp, readFile, rm, stat } from 'node:fs/promises'
+import { mkdtemp, readFile, rm, stat, writeFile } from 'node:fs/promises'
 import { existsSync, mkdtempSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -406,6 +406,58 @@ test('handshake requires the token and reports capabilities', async () => {
     })
     client.close()
   })
+})
+
+test('handshake and the discovery file report the host DSH version when detectable', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'dsh-bridge-version-'))
+  try {
+    // A stand-in CLI install: the anchor manifest IS @deepseek-ai/dsh's.
+    const installAnchor = join(root, 'package.json')
+    await writeFile(installAnchor, `${JSON.stringify({ name: '@deepseek-ai/dsh', version: '9.9.9-test' })}\n`, 'utf8')
+    const { deps, discoveryDir } = makeDeps({ getProfileContext: () => ({ installAnchor }) })
+    const core = new BridgeCore(deps)
+    await core.start()
+    try {
+      const client = new TestClient()
+      await client.connect(core.port as number)
+      const hello = await client.request('bridge.handshake')
+      const result = hello.result as { version: string; dshVersion?: string }
+      assert.equal(result.version, '0.1.0-test')
+      assert.equal(result.dshVersion, '9.9.9-test')
+      client.close()
+      // The discovery file carries the same field, so the extension can read
+      // the host version before even connecting.
+      const entry = JSON.parse(await readFile(join(discoveryDir, `${process.pid}.json`), 'utf8')) as { dshVersion?: string }
+      assert.equal(entry.dshVersion, '9.9.9-test')
+    } finally {
+      await core.stop()
+    }
+    await rm(discoveryDir, { recursive: true, force: true })
+  } finally {
+    await rm(root, { recursive: true, force: true })
+  }
+})
+
+test('handshake and the discovery file omit dshVersion when the host version is undetectable', async () => {
+  const { deps, discoveryDir } = makeDeps({
+    getProfileContext: () => undefined,
+    detectHostVersion: async () => undefined,
+  })
+  const core = new BridgeCore(deps)
+  await core.start()
+  try {
+    const client = new TestClient()
+    await client.connect(core.port as number)
+    const hello = await client.request('bridge.handshake')
+    const result = hello.result as Record<string, unknown>
+    assert.equal('dshVersion' in result, false)
+    client.close()
+    const entry = JSON.parse(await readFile(join(discoveryDir, `${process.pid}.json`), 'utf8')) as Record<string, unknown>
+    assert.equal('dshVersion' in entry, false)
+  } finally {
+    await core.stop()
+    await rm(discoveryDir, { recursive: true, force: true })
+  }
 })
 
 test('malformed lines and unknown methods get structured errors', async () => {

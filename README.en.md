@@ -24,6 +24,7 @@ This plugin closes that gap from inside the harness process: a loopback TCP list
 - **Skill catalog**: read-only listing of project- and user-level skills (stable fields: name, description, source, …); actual invocation stays with the model-side skill tool, whose catalog is injected inside DSH.
 - **Session-log export**: stream one session's logical log — subagent descendants and referenced attachments included — into a ZIP file on the host; archive bytes never cross the ndjson channel, so large logs stay memory-bounded.
 - **Honest capabilities**: `bridge.handshake` reports what this deployment can actually do; a missing optional service degrades one method family, never the whole plugin.
+- **Host version reporting**: the handshake and the discovery file carry `dshVersion` (the host DSH version, e.g. `0.1.7-rc.1`) so the extension can adapt to the host it connected to; the field is omitted — never guessed — when undetectable.
 
 ## How it works
 
@@ -40,7 +41,7 @@ flowchart LR
 ```
 
 1. The plugin binds the first free port in its configured range, so several harness processes (one per editor window) coexist without coordination.
-2. It publishes `{ port, token, pid, protocolVersion, capabilities, directories }` as `$HOME/.dsh/vscode-bridge/<pid>.json` (mode 0600, atomic write); `directories` lists the process cwd, every live session cwd, and every known workspace path so the extension can match its instance. The file is removed on unload, and stale entries are reaped on startup via pid liveness. Workspace directories are no longer written to.
+2. It publishes `{ port, token, pid, protocolVersion, dshVersion?, capabilities, directories }` as `$HOME/.dsh/vscode-bridge/<pid>.json` (mode 0600, atomic write); `directories` lists the process cwd, every live session cwd, and every known workspace path so the extension can match its instance. The file is removed on unload, and stale entries are reaped on startup via pid liveness. Workspace directories are no longer written to.
 3. Every request carries the token in a top-level `token` field; loopback plus file permissions are the whole access boundary.
 4. WSL2's `localhostForwarding` lets a Windows-side extension reach a WSL-side listener transparently.
 
@@ -184,7 +185,7 @@ One JSON object per line, both directions, standard JSON-RPC 2.0 envelope.
 
 | Method | Params | Result |
 |---|---|---|
-| `bridge.handshake` | — | `{ protocolVersion, plugin, version, pid, startedAt, capabilities }` |
+| `bridge.handshake` | — | `{ protocolVersion, plugin, version, dshVersion?, pid, startedAt, capabilities }` — `dshVersion` is the host DSH version (e.g. `0.1.7-rc.1`), omitted when undetectable |
 | `session.list` | `{ includeStored? }` | `{ sessions: LiveSessionInfo[], storedIncluded, stored? }` |
 | `session.get` | `{ sessionId }` | live row, or a stored row with the folded title |
 | `session.setTitle` | `{ sessionId, title }` | `{ sessionId, title, updatedAt }` — live sessions only |
@@ -224,6 +225,7 @@ Error codes: standard JSON-RPC (`-32700` parse, `-32600` invalid request, `-3260
 - **"Delete" is archive**: the session disappears from every grouping surface, but its event log stays on disk. Physical deletion is not a public DSH API.
 - **Preset switching is blank-session only** (the upstream `agent-preset/locked` contract): once a turn has run, the composition is fixed.
 - **`agentPresets` is optional.** With the preset-registration rows missing (the 0.1.5 `agent-presets` row / the 0.1.7 `agent-preset-registry` + declaration rows) the plugin still loads; `preset.*` then answers `service-unavailable` and the handshake reports `presets: false`.
+- **`dshVersion` depends on detectable install facts.** Tried in order: the launcher-provided `profileContext.installAnchor` (DSH ≥ 0.1.7), the CLI entry in `process.argv[1]` (covers CLI-launched 0.1.5), then module resolution from the plugin's own location (development checkouts). When none applies (custom compositions, some packaged hosts) the field is absent — clients must treat it as optional and never assume a default.
 - **`commands`/`skills`/`sessionExport` are optional too.** When the ACP composition lacks the service rows the plugin still loads, the affected method family answers `service-unavailable`, and the handshake reports the flag as `false`; the archive module is only resolved lazily on first use, so an unresolvable module never affects plugin load.
 - **Export does not go through the Web `/export` command.** That command needs the `connection` service the ACP composition does not mount; the bridge bypasses the command layer, reuses the archive module directly, and has `session.exportZip` produce the ZIP file on the host (descendant logs included) without streaming bytes over ndjson.
 - **`command.run` is live-session only and attachment-free.** ACP has no staged-receipt channel, so attachments are always submitted empty; when a command declares it needs them, the upstream error text passes through verbatim as a `kind:'error'` result. Busy sessions are not pre-checked: compact reports `busy` itself, plan answers `queued`.
@@ -248,8 +250,9 @@ All tests live in `tests/`:
 |---|---|
 | `tests/server.test.ts` | Port scanning, ndjson framing, line-limit disconnect, listener lifecycle |
 | `tests/discovery.test.ts` | Publish/replace/clear of the mode-0600 discovery file, dead-pid stale sweep, unwritable directories |
-| `tests/core.test.ts` | Token auth, every RPC method against mocked services, upstream error-code passthrough, event push filtering, degraded-service capabilities |
-| `tests/compose.test.ts` | Real Cordis composition: plugin load → discovery file → TCP handshake → RPC → clean unload |
+| `tests/core.test.ts` | Token auth, every RPC method against mocked services, upstream error-code passthrough, event push filtering, degraded-service capabilities, `dshVersion` presence/omission on handshake and discovery |
+| `tests/host-version.test.ts` | Host-version detection: anchor direct read, anchor-relative resolution (CLI / cohort witness), the argv fallback, source priority, honest absence (resolution jailed to throwaway trees, immune to the machine's own node_modules) |
+| `tests/compose.test.ts` | Real Cordis composition: plugin load → discovery file → TCP handshake (`dshVersion` end to end) → RPC → clean unload |
 
 ### Directory structure
 
@@ -257,6 +260,7 @@ All tests live in `tests/`:
 src/
   index.ts        plugin entry (name/inject/Config/apply, Cordis wiring)
   core.ts         BridgeCore: attach logic, RPC dispatch, event push
+  host-version.ts host DSH version detection (profileContext anchor → CLI entry → local resolution)
   server.ts       ndjson JSON-RPC/TCP transport with port-range scanning
   discovery.ts    <pid>.json discovery publish/retract (atomic, mode 0600, stale sweep)
   protocol.ts     wire types, error codes, capability flags

@@ -24,6 +24,7 @@ ACP 是纯自动化接口，标题、删除、工作区分组、预设、权限�
 - **技能目录**：只读列出项目级与用户级技能（名称、描述、来源等稳定字段）；技能的真正调用由模型侧 skill 工具完成，目录已在 DSH 内注入。
 - **会话日志导出**：把会话（含子代理后代）的逻辑日志与引用附件流式打包为宿主侧 ZIP 文件——字节不经 ndjson 通道，大日志内存有界。
 - **能力如实上报**：`bridge.handshake` 报告当前部署真实可用的能力；某个可选服务缺失只降级对应方法族，插件整体不受影响。
+- **宿主版本告知**：握手与发现文件携带 `dshVersion`（宿主 DSH 版本，如 `0.1.7-rc.1`），扩展据此适配行为；无法探测时字段缺省而非猜测。
 
 ## 工作原理
 
@@ -40,7 +41,7 @@ flowchart LR
 ```
 
 1. 插件绑定配置区间内第一个空闲端口，多个 DSH 进程（每个编辑器窗口一个）无需协调即可共存。
-2. 插件把 `{ port, token, pid, protocolVersion, capabilities, directories }` 写入 `$HOME/.dsh/vscode-bridge/<pid>.json`（0600，原子写），`directories` 列出进程 cwd、每个活会话 cwd 和每个已知工作区路径供扩展匹配实例；卸载时删除，启动时按 pid 活性回收历史残留。工作区目录不再被写入。
+2. 插件把 `{ port, token, pid, protocolVersion, dshVersion?, capabilities, directories }` 写入 `$HOME/.dsh/vscode-bridge/<pid>.json`（0600，原子写），`directories` 列出进程 cwd、每个活会话 cwd 和每个已知工作区路径供扩展匹配实例；卸载时删除，启动时按 pid 活性回收历史残留。工作区目录不再被写入。
 3. 每个请求都必须在顶层 `token` 字段携带令牌；loopback + 文件权限就是全部访问边界。
 4. 借助 WSL2 的 `localhostForwarding`，Windows 侧的扩展可以透明地连上 WSL 侧的监听器。
 
@@ -179,7 +180,7 @@ dsh plugin --profile acp-vscode add /absolute/path/to/dsh-vscode-bridge
 
 | 方法 | 参数 | 返回 |
 |---|---|---|
-| `bridge.handshake` | — | `{ protocolVersion, plugin, version, pid, startedAt, capabilities }` |
+| `bridge.handshake` | — | `{ protocolVersion, plugin, version, dshVersion?, pid, startedAt, capabilities }`——`dshVersion` 是宿主 DSH 版本（如 `0.1.7-rc.1`），无法探测时缺省 |
 | `session.list` | `{ includeStored? }` | `{ sessions: LiveSessionInfo[], storedIncluded, stored? }` |
 | `session.get` | `{ sessionId }` | 活会话行，或带折叠标题的存储态行 |
 | `session.setTitle` | `{ sessionId, title }` | `{ sessionId, title, updatedAt }`——仅限活会话 |
@@ -219,6 +220,7 @@ dsh plugin --profile acp-vscode add /absolute/path/to/dsh-vscode-bridge
 - **「删除」即归档**：会话从所有分组界面消失，但其事件日志仍保留在磁盘上。物理删除不是 DSH 的公开 API。
 - **预设切换仅限空白会话**（上游 `agent-preset/locked` 契约）：跑过一轮后组合即固定。
 - **`agentPresets` 是可选服务**。缺少预设注册行时（0.1.5 的 `agent-presets` 行 / 0.1.7 的 `agent-preset-registry` + 声明行）插件照常加载；此时 `preset.*` 返回 `service-unavailable`，握手如实报告 `presets: false`。
+- **`dshVersion` 依赖可探测的安装事实**。依次尝试：启动器提供的 `profileContext.installAnchor`（DSH ≥ 0.1.7）、`process.argv[1]` 的 CLI 入口（覆盖 0.1.5 的 CLI 启动）、插件自身位置的模块解析（开发检出）。三者都不适用时（自建组合、部分打包宿主）字段缺省——扩展须把它当可选字段，不可假设默认值。
 - **`commands`/`skills`/`sessionExport` 同为可选能力**。ACP 组合缺对应服务行时插件照常装载，对应方法族返回 `service-unavailable`，握手能力位为 `false`；归档模块只在首次调用时动态解析，解析失败不影响插件装载。
 - **导出不走 Web 的 `/export` 指令**。该指令依赖 ACP 组合没有的 `connection` 服务；bridge 绕过指令层直接复用归档模块，由 `session.exportZip` 在宿主侧产出 ZIP 文件（含子代理后代日志），ZIP 字节不经 ndjson 通道。
 - **`command.run` 仅限活会话且不带附件**。ACP 侧没有暂存回执通道，附件恒以空数组提交；指令声明需要附件时，上游错误文本原样透传为 `kind:'error'` 结果。忙会话不预检：compact 自报 `busy`、plan 返回 `queued`。
@@ -243,8 +245,9 @@ pnpm run build       # 产出 lib/ 与 lib/types/
 |---|---|
 | `tests/server.test.ts` | 端口扫描、ndjson 分帧、超长行断连、监听器生命周期 |
 | `tests/discovery.test.ts` | 0600 发现文件的发布/替换/清理、死 pid 残留清扫、不可写目录 |
-| `tests/core.test.ts` | token 鉴权、全部 RPC 方法（mock 服务）、上游错误码透传、事件推送过滤、服务降级时的能力上报 |
-| `tests/compose.test.ts` | 真实 Cordis 组合：插件加载 → 发现文件 → TCP 握手 → RPC → 干净卸载 |
+| `tests/core.test.ts` | token 鉴权、全部 RPC 方法（mock 服务）、上游错误码透传、事件推送过滤、服务降级时的能力上报、握手与发现文件的 `dshVersion` 携带/缺省 |
+| `tests/host-version.test.ts` | 宿主版本探测：锚点直读、锚点相对解析（CLI / cohort 见证）、argv 回退、优先级、不可探测时如实缺省（解析关进临时树监狱，不受本机环境影响） |
+| `tests/compose.test.ts` | 真实 Cordis 组合：插件加载 → 发现文件 → TCP 握手（含 `dshVersion` 端到端）→ RPC → 干净卸载 |
 
 ### 目录结构
 
@@ -252,6 +255,7 @@ pnpm run build       # 产出 lib/ 与 lib/types/
 src/
   index.ts        插件入口（name/inject/Config/apply，Cordis 接线）
   core.ts         BridgeCore：attach 逻辑、RPC 分发、事件推送
+  host-version.ts 宿主 DSH 版本探测（profileContext 锚点 → CLI 入口 → 本地解析）
   server.ts       ndjson JSON-RPC/TCP 传输层（端口区间扫描）
   discovery.ts    <pid>.json 发现文件的发布与回收（原子写，0600，残留清扫）
   protocol.ts     协议类型、错误码、能力标志

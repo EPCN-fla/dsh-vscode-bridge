@@ -23,6 +23,7 @@ import type { SessionTitleService } from '@deepseek-ai/dsh-session-title'
 import type { SkillRegistry, SkillViewOptions } from '@deepseek-ai/dsh-skill'
 import type { WorkspaceRegistry } from '@deepseek-ai/dsh-workspace'
 import { DiscoveryFile } from './discovery.ts'
+import { detectDshVersion, type DetectDshVersionOptions, type ProfileContextSlice } from './host-version.ts'
 import {
   BRIDGE_PLUGIN_NAME,
   BRIDGE_PROTOCOL_VERSION,
@@ -39,6 +40,7 @@ import {
   RPC_SERVICE_UNAVAILABLE,
   RPC_UNAUTHORIZED,
   type BridgeCapabilities,
+  type BridgeHandshakeResult,
   type JsonRpcFailure,
   type JsonRpcNotification,
   type JsonRpcRequest,
@@ -119,6 +121,17 @@ export interface BridgeCoreDeps {
   /** Lazy lookup: `skills` is optional and resolved at request time. */
   readonly getSkills: () => SkillRegistry | undefined
   /**
+   * Lazy probe for the launcher-provided `profileContext` (DSH ≥ 0.1.7;
+   * absent on 0.1.5). Only its `installAnchor` feeds host-version detection.
+   */
+  readonly getProfileContext?: () => ProfileContextSlice | undefined
+  /**
+   * Host-version probe; defaults to {@link detectDshVersion}. A dep (like
+   * `loadSessionLogExport`) because real detection touches the filesystem and
+   * module resolution, which unit tests need to control.
+   */
+  readonly detectHostVersion?: (options: DetectDshVersionOptions) => Promise<string | undefined>
+  /**
    * Lazy probe for the `sessionQuery` engine. The bridge never calls it
    * directly — it gates the `sessionExport` capability and is forwarded into
    * the lazily imported archive module, whose own types validate the shape.
@@ -157,6 +170,8 @@ export class BridgeCore {
   private sessionLogExportProbe: Promise<SessionLogExportModule | undefined> | undefined
   /** Once probed, whether the archive module resolved (optimistic until then). */
   private sessionLogExportResolved: boolean | undefined
+  /** Cached first-call probe of the host DSH version; absent stays absent. */
+  private dshVersionProbe: Promise<string | undefined> | undefined
 
   constructor(deps: BridgeCoreDeps) {
     this.deps = deps
@@ -193,6 +208,20 @@ export class BridgeCore {
       sessionExport: this.deps.getSessionQuery() !== undefined && this.sessionLogExportResolved !== false,
       eventPush: true,
     }
+  }
+
+  /**
+   * Host DSH version reported on the wire (handshake and discovery file),
+   * probed once and cached. `undefined` — the field omitted — when no
+   * detection source applies; never a guess.
+   */
+  dshVersion(): Promise<string | undefined> {
+    const detect = this.deps.detectHostVersion ?? detectDshVersion
+    this.dshVersionProbe ??= detect({
+      profileContext: this.deps.getProfileContext?.(),
+      logger: this.deps.logger,
+    }).catch(() => undefined)
+    return this.dshVersionProbe
   }
 
   /**
@@ -359,17 +388,24 @@ export class BridgeCore {
     return failure(id, RPC_INTERNAL_ERROR, String(error))
   }
 
+  /** `bridge.handshake` payload: identity, host version, capabilities. */
+  private async handshake(): Promise<BridgeHandshakeResult> {
+    const dshVersion = await this.dshVersion()
+    return {
+      protocolVersion: BRIDGE_PROTOCOL_VERSION,
+      plugin: BRIDGE_PLUGIN_NAME,
+      version: this.deps.version,
+      ...(dshVersion === undefined ? {} : { dshVersion }),
+      pid: process.pid,
+      startedAt: this.startedAt,
+      capabilities: this.capabilities(),
+    }
+  }
+
   private async dispatch(method: string, params: unknown, connectionId: number): Promise<unknown> {
     switch (method) {
       case 'bridge.handshake':
-        return {
-          protocolVersion: BRIDGE_PROTOCOL_VERSION,
-          plugin: BRIDGE_PLUGIN_NAME,
-          version: this.deps.version,
-          pid: process.pid,
-          startedAt: this.startedAt,
-          capabilities: this.capabilities(),
-        }
+        return await this.handshake()
       case 'session.list':
         return this.listSessions(params)
       case 'session.get':
@@ -923,10 +959,12 @@ export class BridgeCore {
     const server = this.server
     if (server === undefined || server.port === undefined) return
     try {
+      const dshVersion = await this.dshVersion()
       await this.discovery.publish({
         protocolVersion: BRIDGE_PROTOCOL_VERSION,
         plugin: BRIDGE_PLUGIN_NAME,
         version: this.deps.version,
+        ...(dshVersion === undefined ? {} : { dshVersion }),
         pid: process.pid,
         host: this.deps.config.host,
         port: server.port,

@@ -16,6 +16,8 @@
  *    with the model-side skill tool.
  * 9. Export one session's log as a ZIP file on the host
  *    (`session.exportZip`, lazily resolved archive module).
+ * 10. Report the host DSH version (`dshVersion`) on the handshake and in the
+ *    discovery file, so the extension can adapt to the host it connected to.
  *
  * Discovery: the listener seat (host/port) plus a bearer token are written to
  * `$HOME/.dsh/vscode-bridge/<pid>.json` (mode 0600) and removed on unload;
@@ -123,6 +125,9 @@ export function apply(ctx: Context, config: BridgePluginConfig): void {
     getAgentPresets: () => ctx.get('agentPresets'),
     getCommands: () => ctx.get('commands'),
     getSkills: () => ctx.get('skills'),
+    // Provided by the dsh launcher (≥ 0.1.7) before the tree mounts; absent
+    // on 0.1.5. Feeds host-version detection for `dshVersion` on the wire.
+    getProfileContext: () => ctx.get('profileContext'),
     // Probed without their type-merge packages: the bridge only forwards the
     // values into the lazily imported archive module, which type-checks them.
     getSessionQuery: () => ctx.get('sessionQuery'),
