@@ -7,8 +7,8 @@
  */
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { mkdtempSync } from 'node:fs'
-import { mkdir, rm, writeFile } from 'node:fs/promises'
+import { mkdtempSync, realpathSync } from 'node:fs'
+import { mkdir, rm, symlink, writeFile } from 'node:fs/promises'
 import { createRequire } from 'node:module'
 import { tmpdir } from 'node:os'
 import { join, sep } from 'node:path'
@@ -24,7 +24,9 @@ const silent = { info() {}, warn() {}, error() {} }
  * keeps every lookup hermetic.
  */
 function jailedRequireFrom(jail: string): (base: string | URL) => NodeRequire {
-  const root = jail.endsWith(sep) ? jail : `${jail}${sep}`
+  // realpath: on macOS /tmp is a symlink to /private/tmp, and the resolution
+  // base passed through realpath would otherwise sit outside the jail string.
+  const root = realpathSync(jail) + sep
   return (base) => {
     const require = createRequire(typeof base === 'string' && base.startsWith('file://') ? new URL(base) : base)
     const resolve = (specifier: string): string => {
@@ -147,4 +149,34 @@ test('a file:// install anchor is accepted as well as a plain path', withTempTre
   await writeManifest(anchor, '@deepseek-ai/dsh', '9.9.9-url')
   const version = await detectDshVersion(jailed(root, { profileContext: { installAnchor: pathToFileURL(anchor).href } }))
   assert.equal(version, '9.9.9-url')
+}))
+
+test('the argv fallback follows the bin symlink to the real install tree', withTempTree(async (root) => {
+  // npm/nvm layout: <prefix>/bin/dsh is a symlink into lib/node_modules.
+  // argv[1] carries the link path; without realpath the walk-up misses.
+  const entry = await writeFakeCli(join(root, 'prefix'), '0.1.5-rc.2')
+  const link = join(root, 'prefix', 'bin', 'dsh')
+  await mkdir(join(link, '..'), { recursive: true })
+  try {
+    await symlink(join('..', 'lib', 'node_modules', '@deepseek-ai', 'dsh', 'lib', 'bin.js'), link)
+  } catch {
+    return // platform cannot create symlinks (Windows without privilege)
+  }
+  assert.notEqual(entry, link)
+  const version = await detectDshVersion(jailed(root, { argvPath: link }))
+  assert.equal(version, '0.1.5-rc.2')
+}))
+
+test("one source's failure never skips the later sources", withTempTree(async (root) => {
+  await writeManifest(join(root, 'node_modules', '@deepseek-ai', 'dsh-agent', 'package.json'), '@deepseek-ai/dsh-agent', '9.9.6-self')
+  const jail = jailedRequireFrom(root)
+  const version = await detectDshVersion(jailed(root, {
+    argvPath: join(root, 'argv-throws', 'bin.js'),
+    moduleUrl: pathToFileURL(join(root, 'plugin', 'noop.js')),
+    requireFrom: (base) => {
+      if (String(base).includes('argv-throws')) throw new Error('synthetic resolver failure')
+      return jail(base)
+    },
+  }))
+  assert.equal(version, '9.9.6-self')
 }))

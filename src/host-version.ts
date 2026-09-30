@@ -22,7 +22,7 @@
  * @module dsh-vscode-bridge/host-version
  */
 
-import { readFile } from 'node:fs/promises'
+import { readFile, realpath } from 'node:fs/promises'
 import { createRequire } from 'node:module'
 import { fileURLToPath } from 'node:url'
 import type { BridgeTransportLogger } from './server.ts'
@@ -79,23 +79,40 @@ function asPath(base: string): string {
  */
 export async function detectDshVersion(options: DetectDshVersionOptions = {}): Promise<string | undefined> {
   const requireFrom = options.requireFrom ?? defaultRequireFrom
-  try {
-    const anchor = options.profileContext?.installAnchor
-    if (typeof anchor === 'string' && anchor.length > 0) {
-      const fromAnchor = await versionFromAnchor(asPath(anchor), requireFrom)
-      if (fromAnchor !== undefined) return report(options.logger, fromAnchor, 'profile install anchor')
-    }
-    const argvPath = options.argvPath ?? process.argv[1]
-    if (typeof argvPath === 'string' && argvPath.length > 0) {
-      const fromArgv = await versionByResolving(requireFrom(asPath(argvPath)), CLI_PACKAGE)
-      if (fromArgv !== undefined) return report(options.logger, fromArgv, 'CLI entry path')
-    }
+  const anchor = options.profileContext?.installAnchor
+  if (typeof anchor === 'string' && anchor.length > 0) {
+    const fromAnchor = await quietly(() => versionFromAnchor(asPath(anchor), requireFrom))
+    if (fromAnchor !== undefined) return report(options.logger, fromAnchor, 'profile install anchor')
+  }
+  const argvPath = options.argvPath ?? process.argv[1]
+  if (typeof argvPath === 'string' && argvPath.length > 0) {
+    const fromArgv = await quietly(async () => {
+      // The launched CLI is usually a bin SYMLINK (npm/nvm install it as
+      // `<prefix>/bin/dsh` -> `../lib/node_modules/@deepseek-ai/dsh/lib/bin.js`),
+      // and module resolution never realpaths its base — from the link path
+      // the walk-up can never reach the install tree.
+      const literal = asPath(argvPath)
+      const entry = await realpath(literal).catch(() => literal)
+      return await versionByResolving(requireFrom(entry), CLI_PACKAGE)
+    })
+    if (fromArgv !== undefined) return report(options.logger, fromArgv, 'CLI entry path')
+  }
+  const fromSelf = await quietly(async () => {
     const ownRequire = requireFrom(options.moduleUrl ?? import.meta.url)
-    const fromSelf = await versionByResolving(ownRequire, CLI_PACKAGE)
+    return await versionByResolving(ownRequire, CLI_PACKAGE)
       ?? await versionByResolving(ownRequire, COHORT_PACKAGE)
-    if (fromSelf !== undefined) return report(options.logger, fromSelf, 'plugin-local resolution')
-  } catch { /* detection is best-effort; absence is a normal outcome */ }
+  })
+  if (fromSelf !== undefined) return report(options.logger, fromSelf, 'plugin-local resolution')
   return undefined
+}
+
+/** Per-source error isolation: one source's failure never skips the rest. */
+async function quietly(source: () => Promise<string | undefined>): Promise<string | undefined> {
+  try {
+    return await source()
+  } catch {
+    return undefined
+  }
 }
 
 /**
