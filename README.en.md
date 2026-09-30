@@ -2,7 +2,7 @@
 
 [中文](README.md) | English
 
-A plugin for [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness) (DSH) that gives the [dsh-vscode-lite](https://github.com/EPCN-fla/dsh-vscode-lite) a narrow, token-authenticated JSON-RPC channel into native DSH services — workspace grouping, session titles, session archive, agent presets, permission presets, slash commands, the skill catalog, and session-log export.
+A plugin for [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness) (DSH) that gives the [dsh-lite-vscode](https://github.com/EPCN-fla/dsh-lite-vscode) a narrow, token-authenticated JSON-RPC channel into native DSH services — workspace grouping, session titles, session archive, agent presets, permission presets, slash commands, the skill catalog, and session-log export.
 
 The ACP surface is automation-only: titles, deletion, workspace grouping, presets, and permission modes never cross the ACP wire. With this plugin loaded, the extension talks to the harness's own services directly.
 

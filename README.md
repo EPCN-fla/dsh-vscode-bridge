@@ -2,7 +2,7 @@
 
 中文 | [English](README.en.md)
 
-适用于 [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness)（DSH）的插件：为 [dsh-vscode-lite](https://github.com/EPCN-fla/dsh-vscode-lite) 提供一条窄带、令牌鉴权的 JSON-RPC 通道，直通 DSH 原生服务——工作区分组、会话标题、会话删除、Agent 预设、权限预设、斜杠指令、技能目录、会话日志导出。
+适用于 [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness)（DSH）的插件：为 [dsh-lite-vscode](https://github.com/EPCN-fla/dsh-lite-vscode) 提供一条窄带、令牌鉴权的 JSON-RPC 通道，直通 DSH 原生服务——工作区分组、会话标题、会话删除、Agent 预设、权限预设、斜杠指令、技能目录、会话日志导出。
 
 ACP 是纯自动化接口，标题、删除、工作区分组、预设、权限模式都不会出现在 ACP 协议上。装载本插件后，扩展可以直接调用 DSH 进程内的原生服务。
 
