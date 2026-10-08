@@ -96,6 +96,33 @@ test('lines are framed, dispatched, and answered; close notifies', async () => {
   await server.stop()
 })
 
+test('a multibyte character split across chunks arrives intact', async () => {
+  const received: string[] = []
+  const server = new BridgeTcpServer({
+    host: '127.0.0.1', portStart: 47460, portEnd: 47469,
+    logger: silent,
+    onLine: (_id, line) => received.push(line),
+    onConnectionClosed() {},
+  })
+  await server.start()
+  const socket = createConnection({ host: '127.0.0.1', port: server.port as number })
+  try {
+    // '修' is three UTF-8 bytes; cut one byte in so no chunk decodes it alone.
+    const line = '{"title":"修复登录流程"}'
+    const bytes = Buffer.from(`${line}\n`, 'utf8')
+    const cut = Buffer.byteLength('{"title":"修', 'utf8') - 2 // inside the 3-byte sequence
+    socket.write(bytes.subarray(0, cut))
+    await new Promise((resolve) => setTimeout(resolve, 100))
+    socket.write(bytes.subarray(cut))
+    await new Promise((resolve) => setTimeout(resolve, 100))
+    assert.deepEqual(received, [line])
+    assert.equal(JSON.parse(received[0] as string).title, '修复登录流程')
+  } finally {
+    socket.destroy()
+    await server.stop()
+  }
+})
+
 test('an over-long line disconnects the peer', async () => {
   const closed: number[] = []
   const server = new BridgeTcpServer({

@@ -7,6 +7,7 @@
  */
 
 import { createServer, type Server, type Socket } from 'node:net'
+import { StringDecoder } from 'node:string_decoder'
 
 /** Longest accepted single line; a peer exceeding it is disconnected. */
 export const MAX_LINE_BYTES = 1024 * 1024
@@ -34,7 +35,18 @@ export interface BridgeTcpServerOptions {
 
 interface ConnectionState {
   readonly socket: Socket
+  /**
+   * Incremental UTF-8 decoder: a TCP chunk boundary may split a multibyte
+   * character, and decoding chunks independently would corrupt it into
+   * replacement characters (CJK session titles cross this channel).
+   */
+  readonly decoder: StringDecoder
   buffer: string
+  /**
+   * Undispatched bytes, counted on arrival. Decoded length undercounts
+   * multibyte text, so the line limit is enforced on the wire bytes.
+   */
+  pendingBytes: number
 }
 
 /**
@@ -140,7 +152,7 @@ export class BridgeTcpServer {
     socket.unref()
     const connectionId = this.nextConnectionId
     this.nextConnectionId += 1
-    const connection: ConnectionState = { socket, buffer: '' }
+    const connection: ConnectionState = { socket, decoder: new StringDecoder('utf8'), buffer: '', pendingBytes: 0 }
     this.connections.set(connectionId, connection)
     socket.setNoDelay(true)
     socket.on('data', (chunk: Buffer) => this.onData(connectionId, connection, chunk))
@@ -155,17 +167,23 @@ export class BridgeTcpServer {
   }
 
   private onData(connectionId: number, connection: ConnectionState, chunk: Buffer): void {
-    connection.buffer += chunk.toString('utf8')
-    if (connection.buffer.length > MAX_LINE_BYTES) {
+    connection.pendingBytes += chunk.length
+    if (connection.pendingBytes > MAX_LINE_BYTES) {
       this.options.logger.warn(`dsh-vscode-bridge: connection ${connectionId} exceeded the line limit; disconnecting`)
       connection.socket.destroy()
       return
     }
+    connection.buffer += connection.decoder.write(chunk)
     for (;;) {
       const newline = connection.buffer.indexOf('\n')
       if (newline < 0) return
-      const line = connection.buffer.slice(0, newline).trim()
+      const raw = connection.buffer.slice(0, newline)
       connection.buffer = connection.buffer.slice(newline + 1)
+      // Valid UTF-8 re-encodes to the same bytes, so this settles the frame's
+      // share exactly; a `\r\n` sender's `\r` stays inside `raw` and is
+      // accounted for here.
+      connection.pendingBytes -= Buffer.byteLength(raw, 'utf8') + 1
+      const line = raw.trim()
       if (line.length === 0) continue
       try {
         this.options.onLine(connectionId, line)
