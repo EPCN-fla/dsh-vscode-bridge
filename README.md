@@ -47,9 +47,9 @@ flowchart LR
 
 ## 安装
 
-兼容 deepseek-harness **0.1.5-rc.2** 与 **0.1.7-rc.1**（`@deepseek-ai/dsh-*` 包 ≥ 0.1.5-rc.2）。插件未在 `peerDependencies` 声明 DSH 包，因此不受 0.1.7 的安装/启动 peer 版本强制检查（DSH-0.1.7-J1-01）约束。
+兼容 deepseek-harness **0.1.7-rc.1**、**0.2.0-rc.1** 与 **0.2.0-rc.2**（0.1.5 自本版起移出支持走廊；0.1.5 主机请停留在插件 0.2.x）。插件未在 `peerDependencies` 声明 DSH 包，因此不受 peer 版本强制约束——0.1.7 的安装/启动检查（DSH-0.1.7-J1-01）与 0.2.0 新增的 profile 组合期兼容预审（不满足 `@deepseek-ai/dsh*` peer 的行会被禁用，可用 `dsh plugin allow-version` 授予精确版本豁免）都只检查声明了 DSH peer 的插件。
 
-插件要装进一个同时携带 `dsh-base` 与 `dsh-acp-app` 两个 bundle 的自建 profile。DSH 默认不带现成的 acp profile：`dsh plugin` 初始化出的自建 profile 只有 `dsh-base`，需要手动补上 `dsh-acp-app` bundle，以及 ACP 组合没有的几行服务（`workspace`、预设注册行，外加 `standard` 预设挂载所需的子代理模型路由宿主行）。预设注册行随主机版本不同：0.1.5 主机是 `agent-presets`（`@deepseek-ai/dsh-agent-presets`，`config.default` 指定默认预设）；0.1.7 主机预设改为声明式（DSH-0.1.7-J1-03），注册行是 `agent-preset-registry`（`@deepseek-ai/dsh-agent-preset-registry`，`config: { default: standard }`），每个预设另需一条 `@deepseek-ai/dsh-agent-preset` 声明行（可参考 web-app bundle 的 `presets/*.patch.yml`）。该服务未挂载时桥接照常加载，`presets` 能力降级为不可用。
+插件要装进一个同时携带 `dsh-base` 与 `dsh-acp-app` 两个 bundle 的自建 profile。DSH 默认不带现成的 acp profile：`dsh plugin` 初始化出的自建 profile 只有 `dsh-base`，需要手动补上 `dsh-acp-app` bundle，以及 ACP 组合没有的几行服务（`workspace`、预设注册行，外加 `standard` 预设挂载所需的子代理模型路由宿主行）。预设注册行在走廊内不变：0.1.7 起预设为声明式（DSH-0.1.7-J1-03），注册行是 `agent-preset-registry`（`@deepseek-ai/dsh-agent-preset-registry`，`config: { default: standard }`），每个预设另需一条 `@deepseek-ai/dsh-agent-preset` 声明行（可参考 web-app bundle 的 `presets/*.patch.yml`，其行形状在 0.1.7 与 0.2.0 间逐字一致）。该服务未挂载时桥接照常加载，`presets` 能力降级为不可用。
 
 ### 从 npm 安装
 
@@ -91,28 +91,7 @@ dsh plugin --profile acp-vscode add /absolute/path/to/dsh-vscode-bridge
 }
 ```
 
-再在同目录的 `cordis.patch.yml` 中注册插件与缺失的服务行。预设注册行随主机版本不同，按 `dsh --version` 的结果二选一：
-
-**0.1.5 主机**：
-
-```yaml
-# 插入 acp 组合未携带的服务行
-- insert:
-    - id: workspace
-      name: '@deepseek-ai/dsh-workspace'
-    - id: agent-presets
-      name: '@deepseek-ai/dsh-agent-presets'
-      config:
-        default: standard
-    # standard 预设的子代理模型路由读这个宿主行（web bundle 自带，acp 组合没有）
-    - id: subagent-model-selection-settings
-      name: '@deepseek-ai/dsh-tool-subagent/model-selection-settings'
-    - id: dsh-vscode-bridge
-      name: 'dsh-vscode-bridge'
-      # config: { portStart: 7310, portEnd: 7319 }   # 可选覆盖
-```
-
-**0.1.7 主机**：
+再在同目录的 `cordis.patch.yml` 中注册插件与缺失的服务行。0.1.7 与 0.2.0 主机共用同一套行：
 
 ```yaml
 # 插入 acp 组合未携带的服务行
@@ -134,9 +113,9 @@ dsh plugin --profile acp-vscode add /absolute/path/to/dsh-vscode-bridge
 # （npm 包的 files 字段已包含；扩展的一键安装命令会自动写入）
 ```
 
-0.1.7 主机切勿照抄 0.1.5 的 `agent-presets` 行——该包已被拆分移除（DSH-0.1.7-J1-03），该行会 "failed to import"（条目级失败），`agentPresets` 服务缺失，预设选择器消失。
+切勿从 0.1.5 时代的旧 profile 照抄 `agent-presets` 行——该包已在 0.1.7 拆分移除（DSH-0.1.7-J1-03），在走廊内的主机上该行会 "failed to import"（条目级失败），`agentPresets` 服务缺失，预设选择器消失；扩展的一键安装会剥离这类遗留行并补上声明行（留 `.bak` 备份）。
 
-下面的权限元数据块两个版本共用（可选）：
+下面的权限元数据块在走廊内通用（可选）：
 
 ```yaml
 # 可选：为三档权限补上显示名与描述（base 的默认表只有 sandbox/approval，
@@ -161,7 +140,7 @@ dsh plugin --profile acp-vscode add /absolute/path/to/dsh-vscode-bridge
         description: 完全文件访问，不再弹出批准。
 ```
 
-最后把扩展的 `dsh.profile` 设置为 `acp-vscode`（扩展的「一键安装 bridge」命令会自动完成上述全部步骤：按主机 `dsh --version` 选择对应版本的行集，并迁移旧安装器写过的 profile——剥离失效的 `agent-presets` 行、补声明行、留 `.bak` 备份）；手抄 YAML 的路径只推荐给需要定制的用户。
+最后把扩展的 `dsh.profile` 设置为 `acp-vscode`（扩展的「一键安装 bridge」命令会自动完成上述全部步骤：按主机 `dsh --version` 选择行集——0.1.7 起含 0.2.0 同为这套声明式行集——并迁移旧安装器写过的 profile）；手抄 YAML 的路径只推荐给需要定制的用户。
 
 ## 通信协议
 
@@ -187,7 +166,7 @@ dsh plugin --profile acp-vscode add /absolute/path/to/dsh-vscode-bridge
 | `session.delete` | `{ sessionId }` | `{ sessionId, archived: true }`；有活动（运行中 turn）的会话以 `-32009 session/active` 拒绝（DSH ≥ 0.1.7），未知会话以 `-32004 session/not-found` 拒绝 |
 | `session.subscribe` | `{ sessionId?, types? }` | `{ subscribed: true, types }`；事件以 `bridge.event` 通知到达 |
 | `session.unsubscribe` | — | `{ subscribed: false }` |
-| `preset.list` | — | `{ default, presets: [{ id, trust?, name?, description?, broken?, isDefault }] }`——`trust`（`'system' \| 'user'`）仅 0.1.5 主机提供，0.1.7 起上游已移除该字段 |
+| `preset.list` | — | `{ default, presets: [{ id, name?, description?, broken?, isDefault }] }` |
 | `preset.current` | `{ sessionId }` | `{ sessionId, preset }` |
 | `preset.select` | `{ sessionId, presetId }` | `{ sessionId, selected }`；会话开跑后以 `agent-preset/locked` 失败 |
 | `permission.get` | `{ sessionId? }` | `{ options: [{ value, name, description? }], default, current? }` |
@@ -219,8 +198,8 @@ dsh plugin --profile acp-vscode add /absolute/path/to/dsh-vscode-bridge
 - **重命名与权限/预设切换要求活会话**。存储态（未运行）会话需先经 ACP resume；存储态标题仍可通过 `session.get` 读取。
 - **「删除」即归档**：会话从所有分组界面消失，但其事件日志仍保留在磁盘上。物理删除不是 DSH 的公开 API。
 - **预设切换仅限空白会话**（上游 `agent-preset/locked` 契约）：跑过一轮后组合即固定。
-- **`agentPresets` 是可选服务**。缺少预设注册行时（0.1.5 的 `agent-presets` 行 / 0.1.7 的 `agent-preset-registry` + 声明行）插件照常加载；此时 `preset.*` 返回 `service-unavailable`，握手如实报告 `presets: false`。
-- **`dshVersion` 依赖可探测的安装事实**。依次尝试：启动器提供的 `profileContext.installAnchor`（DSH ≥ 0.1.7）、`process.argv[1]` 的 CLI 入口（覆盖 0.1.5 的 CLI 启动）、插件自身位置的模块解析（开发检出）。三者都不适用时（自建组合、部分打包宿主）字段缺省——扩展须把它当可选字段，不可假设默认值。
+- **`agentPresets` 是可选服务**。缺少预设注册行时（`agent-preset-registry` + 声明行）插件照常加载；此时 `preset.*` 返回 `service-unavailable`，握手如实报告 `presets: false`。
+- **`dshVersion` 依赖可探测的安装事实**。依次尝试：启动器提供的 `profileContext.installAnchor`（走廊内宿主均提供）、`process.argv[1]` 的 CLI 入口（覆盖未提供 `profileContext` 的启动方式）、插件自身位置的模块解析（开发检出）。三者都不适用时（自建组合、部分打包宿主）字段缺省——扩展须把它当可选字段，不可假设默认值。
 - **`commands`/`skills`/`sessionExport` 同为可选能力**。ACP 组合缺对应服务行时插件照常装载，对应方法族返回 `service-unavailable`，握手能力位为 `false`；归档模块只在首次调用时动态解析，解析失败不影响插件装载。
 - **导出不走 Web 的 `/export` 指令**。该指令依赖 ACP 组合没有的 `connection` 服务；bridge 绕过指令层直接复用归档模块，由 `session.exportZip` 在宿主侧产出 ZIP 文件（含子代理后代日志），ZIP 字节不经 ndjson 通道。
 - **`command.run` 仅限活会话且不带附件**。ACP 侧没有暂存回执通道，附件恒以空数组提交；指令声明需要附件时，上游错误文本原样透传为 `kind:'error'` 结果。忙会话不预检：compact 自报 `busy`、plan 返回 `queued`。

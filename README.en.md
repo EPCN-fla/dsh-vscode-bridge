@@ -47,9 +47,9 @@ flowchart LR
 
 ## Install
 
-Compatible with deepseek-harness **0.1.5-rc.2** and **0.1.7-rc.1** (`@deepseek-ai/dsh-*` packages ≥ 0.1.5-rc.2). The plugin declares no DSH package in `peerDependencies`, so the 0.1.7 install/startup peer enforcement (DSH-0.1.7-J1-01) does not gate it.
+Compatible with deepseek-harness **0.1.7-rc.1**, **0.2.0-rc.1**, and **0.2.0-rc.2** (0.1.5 leaves the support corridor with this release; 0.1.5 hosts should stay on plugin 0.2.x). The plugin declares no DSH package in `peerDependencies`, so peer enforcement does not gate it — neither the 0.1.7 install/startup checks (DSH-0.1.7-J1-01) nor the composition-time compatibility preflight added in 0.2.0 (which disables rows whose declared `@deepseek-ai/dsh*` peers are unsatisfied; `dsh plugin allow-version` grants an exact-version exemption) looks at plugins without DSH peers.
 
-The plugin must be loaded into a custom profile carrying both the `dsh-base` and `dsh-acp-app` bundles. DSH ships no ready-made acp profile: a custom profile initialized by `dsh plugin` starts with `dsh-base` only, so you add the `dsh-acp-app` bundle by hand, plus the service rows the ACP composition does not ship (`workspace`, the preset-registry row, and the subagent model-route host row the `standard` preset mounts). The preset-registry row depends on the host version: on 0.1.5 it is `agent-presets` (`@deepseek-ai/dsh-agent-presets`, with `config.default`); on 0.1.7 presets are declarative (DSH-0.1.7-J1-03) — the registry row is `agent-preset-registry` (`@deepseek-ai/dsh-agent-preset-registry`, `config: { default: standard }`) and each preset needs its own `@deepseek-ai/dsh-agent-preset` declaration row (see the web-app bundle's `presets/*.patch.yml`). Without the service the bridge still loads; its `presets` capability reports unavailable.
+The plugin must be loaded into a custom profile carrying both the `dsh-base` and `dsh-acp-app` bundles. DSH ships no ready-made acp profile: a custom profile initialized by `dsh plugin` starts with `dsh-base` only, so you add the `dsh-acp-app` bundle by hand, plus the service rows the ACP composition does not ship (`workspace`, the preset-registry row, and the subagent model-route host row the `standard` preset mounts). The preset-registry row is stable across the corridor: presets are declarative since 0.1.7 (DSH-0.1.7-J1-03) — the registry row is `agent-preset-registry` (`@deepseek-ai/dsh-agent-preset-registry`, `config: { default: standard }`) and each preset needs its own `@deepseek-ai/dsh-agent-preset` declaration row (see the web-app bundle's `presets/*.patch.yml`, byte-identical between 0.1.7 and 0.2.0). Without the service the bridge still loads; its `presets` capability reports unavailable.
 
 ### From npm
 
@@ -91,29 +91,7 @@ First add the ACP app to the bundle list in `$DSH_HOME/profiles/acp-vscode/packa
 }
 ```
 
-Then register the plugin and the missing service rows in `cordis.patch.yml` next to it. The preset-registration rows depend on the host version — pick one by the output of `dsh --version`:
-
-**0.1.5 hosts**:
-
-```yaml
-# Insert the rows the ACP composition does not ship.
-- insert:
-    - id: workspace
-      name: '@deepseek-ai/dsh-workspace'
-    - id: agent-presets
-      name: '@deepseek-ai/dsh-agent-presets'
-      config:
-        default: standard
-    # The standard preset's subagent model routes read this host row
-    # (shipped by the web bundle, absent from the ACP composition).
-    - id: subagent-model-selection-settings
-      name: '@deepseek-ai/dsh-tool-subagent/model-selection-settings'
-    - id: dsh-vscode-bridge
-      name: 'dsh-vscode-bridge'
-      # config: { portStart: 7310, portEnd: 7319 }   # optional overrides
-```
-
-**0.1.7 hosts**:
+Then register the plugin and the missing service rows in `cordis.patch.yml` next to it. 0.1.7 and 0.2.0 hosts share one row set:
 
 ```yaml
 # Insert the rows the ACP composition does not ship.
@@ -138,9 +116,9 @@ Then register the plugin and the missing service rows in `cordis.patch.yml` next
 # writes them for you).
 ```
 
-A 0.1.7 host must not copy the 0.1.5 `agent-presets` row — the package was split and removed (DSH-0.1.7-J1-03); the row fails to import (entry-level failure), the `agentPresets` service goes missing, and the preset picker disappears.
+Never copy the 0.1.5-era `agent-presets` row from an old profile — the package was split and removed in 0.1.7 (DSH-0.1.7-J1-03); on any corridor host the row fails to import (entry-level failure), the `agentPresets` service goes missing, and the preset picker disappears. The extension's one-click install strips such legacy rows and adds the declaration rows (leaving a `.bak` backup).
 
-The optional permission-metadata block below is shared by both versions:
+The optional permission-metadata block below applies across the corridor:
 
 ```yaml
 # Optional: add display names and descriptions to the three permission
@@ -166,7 +144,7 @@ The optional permission-metadata block below is shared by both versions:
         description: Full file access without approval prompts.
 ```
 
-Finally point the extension at the profile by setting `dsh.profile` to `acp-vscode` (the extension's one-click install automates the whole sequence: it picks the row set matching the host's `dsh --version` and migrates profiles written by older installers — stripping the dead `agent-presets` row, adding the declaration rows, leaving a `.bak` backup); hand-writing the YAML is only recommended when you customize.
+Finally point the extension at the profile by setting `dsh.profile` to `acp-vscode` (the extension's one-click install automates the whole sequence: it picks the row set matching the host's `dsh --version` — one declarative set covers 0.1.7 and 0.2.0 — and migrates profiles written by older installers); hand-writing the YAML is only recommended when you customize.
 
 ## Wire protocol
 
@@ -192,7 +170,7 @@ One JSON object per line, both directions, standard JSON-RPC 2.0 envelope.
 | `session.delete` | `{ sessionId }` | `{ sessionId, archived: true }` — a session with live activity (a running turn) is refused with `-32009 session/active` (DSH ≥ 0.1.7); an unknown session with `-32004 session/not-found` |
 | `session.subscribe` | `{ sessionId?, types? }` | `{ subscribed: true, types }`; events arrive as `bridge.event` notifications |
 | `session.unsubscribe` | — | `{ subscribed: false }` |
-| `preset.list` | — | `{ default, presets: [{ id, trust?, name?, description?, broken?, isDefault }] }` — `trust` (`'system' \| 'user'`) is only published by 0.1.5 hosts; upstream removed the field in 0.1.7 |
+| `preset.list` | — | `{ default, presets: [{ id, name?, description?, broken?, isDefault }] }` |
 | `preset.current` | `{ sessionId }` | `{ sessionId, preset }` |
 | `preset.select` | `{ sessionId, presetId }` | `{ sessionId, selected }`; fails with `agent-preset/locked` once the session has started |
 | `permission.get` | `{ sessionId? }` | `{ options: [{ value, name, description? }], default, current? }` |
@@ -224,8 +202,8 @@ Error codes: standard JSON-RPC (`-32700` parse, `-32600` invalid request, `-3260
 - **Rename and permission/preset switches require a live session.** A stored (not running) session must be resumed through ACP first; stored titles remain readable via `session.get`.
 - **"Delete" is archive**: the session disappears from every grouping surface, but its event log stays on disk. Physical deletion is not a public DSH API.
 - **Preset switching is blank-session only** (the upstream `agent-preset/locked` contract): once a turn has run, the composition is fixed.
-- **`agentPresets` is optional.** With the preset-registration rows missing (the 0.1.5 `agent-presets` row / the 0.1.7 `agent-preset-registry` + declaration rows) the plugin still loads; `preset.*` then answers `service-unavailable` and the handshake reports `presets: false`.
-- **`dshVersion` depends on detectable install facts.** Tried in order: the launcher-provided `profileContext.installAnchor` (DSH ≥ 0.1.7), the CLI entry in `process.argv[1]` (covers CLI-launched 0.1.5), then module resolution from the plugin's own location (development checkouts). When none applies (custom compositions, some packaged hosts) the field is absent — clients must treat it as optional and never assume a default.
+- **`agentPresets` is optional.** With the preset-registration rows missing (the `agent-preset-registry` row plus the declaration rows) the plugin still loads; `preset.*` then answers `service-unavailable` and the handshake reports `presets: false`.
+- **`dshVersion` depends on detectable install facts.** Tried in order: the launcher-provided `profileContext.installAnchor` (every corridor host provides it), the CLI entry in `process.argv[1]` (covers launches without a `profileContext`), then module resolution from the plugin's own location (development checkouts). When none applies (custom compositions, some packaged hosts) the field is absent — clients must treat it as optional and never assume a default.
 - **`commands`/`skills`/`sessionExport` are optional too.** When the ACP composition lacks the service rows the plugin still loads, the affected method family answers `service-unavailable`, and the handshake reports the flag as `false`; the archive module is only resolved lazily on first use, so an unresolvable module never affects plugin load.
 - **Export does not go through the Web `/export` command.** That command needs the `connection` service the ACP composition does not mount; the bridge bypasses the command layer, reuses the archive module directly, and has `session.exportZip` produce the ZIP file on the host (descendant logs included) without streaming bytes over ndjson.
 - **`command.run` is live-session only and attachment-free.** ACP has no staged-receipt channel, so attachments are always submitted empty; when a command declares it needs them, the upstream error text passes through verbatim as a `kind:'error'` result. Busy sessions are not pre-checked: compact reports `busy` itself, plan answers `queued`.
