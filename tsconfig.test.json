@@ -1,0 +1,13 @@
+{
+  // Tests run under `node --test` with native type stripping and were
+  // historically outside tsc's reach; this config pulls them into typecheck
+  // so mock shapes cannot drift from the real contracts (they already had).
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "noEmit": true,
+    "rootDir": ".",
+    "declaration": false,
+    "declarationDir": null
+  },
+  "include": ["src/**/*.ts", "tests/**/*.ts"]
+}

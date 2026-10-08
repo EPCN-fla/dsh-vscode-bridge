@@ -1187,7 +1187,7 @@ test('session.exportZip produces a valid ZIP through the real archive module', {
       mutable.sessionPersistence = {
         open: async (id: string) => {
           const log = storedLogs.get(id)
-          assert.notEqual(log, undefined, `persistence.open(${id})`)
+          if (log === undefined) throw new Error(`persistence.open(${id})`)
           return {
             header: log.header,
             read: async () => ({ events: log.events }),
