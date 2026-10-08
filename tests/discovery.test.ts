@@ -7,11 +7,11 @@ import { spawn } from 'node:child_process'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { DiscoveryFile } from '../src/discovery.ts'
-import { BRIDGE_PLUGIN_NAME } from '../src/protocol.ts'
+import { BRIDGE_PLUGIN_NAME, type DiscoveryFilePayload } from '../src/protocol.ts'
 
 const silent = { info() {}, warn() {}, error() {} }
 
-function payload(port: number, directories: readonly string[] = []) {
+function payload(port: number, directories: readonly string[] = []): DiscoveryFilePayload {
   return {
     protocolVersion: 1,
     plugin: BRIDGE_PLUGIN_NAME,
@@ -27,6 +27,9 @@ function payload(port: number, directories: readonly string[] = []) {
       sessionArchive: true,
       presets: true,
       permissions: true,
+      commands: true,
+      skills: true,
+      sessionExport: true,
       eventPush: true,
     },
     directories,

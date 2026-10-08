@@ -5,12 +5,13 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { createConnection, type Socket } from 'node:net'
-import { mkdtemp, readFile, rm, stat } from 'node:fs/promises'
+import { mkdtemp, readFile, rm, stat, writeFile } from 'node:fs/promises'
 import { existsSync, mkdtempSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { BridgeCore, matchesEventType } from '../src/core.ts'
 import type { BridgeCoreDeps } from '../src/core.ts'
+import { DEFAULT_PUSH_TYPES } from '../src/protocol.ts'
 
 const silent = { info() {}, warn() {}, error() {} }
 
@@ -106,8 +107,8 @@ function makeMocks() {
     agentPresets: {
       defaultId: 'standard',
       list: async () => [
-        { id: 'standard', trust: 'system', name: 'Standard' },
-        { id: 'fast', trust: 'user', description: 'Fast model' },
+        { id: 'standard', name: 'Standard' },
+        { id: 'fast', description: 'Fast model' },
       ],
       composedPreset: () => 'standard',
       select: async (_agent: unknown, presetId: string) => {
@@ -408,6 +409,58 @@ test('handshake requires the token and reports capabilities', async () => {
   })
 })
 
+test('handshake and the discovery file report the host DSH version when detectable', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'dsh-bridge-version-'))
+  try {
+    // A stand-in CLI install: the anchor manifest IS @deepseek-ai/dsh's.
+    const installAnchor = join(root, 'package.json')
+    await writeFile(installAnchor, `${JSON.stringify({ name: '@deepseek-ai/dsh', version: '9.9.9-test' })}\n`, 'utf8')
+    const { deps, discoveryDir } = makeDeps({ getProfileContext: () => ({ installAnchor }) })
+    const core = new BridgeCore(deps)
+    await core.start()
+    try {
+      const client = new TestClient()
+      await client.connect(core.port as number)
+      const hello = await client.request('bridge.handshake')
+      const result = hello.result as { version: string; dshVersion?: string }
+      assert.equal(result.version, '0.1.0-test')
+      assert.equal(result.dshVersion, '9.9.9-test')
+      client.close()
+      // The discovery file carries the same field, so the extension can read
+      // the host version before even connecting.
+      const entry = JSON.parse(await readFile(join(discoveryDir, `${process.pid}.json`), 'utf8')) as { dshVersion?: string }
+      assert.equal(entry.dshVersion, '9.9.9-test')
+    } finally {
+      await core.stop()
+    }
+    await rm(discoveryDir, { recursive: true, force: true })
+  } finally {
+    await rm(root, { recursive: true, force: true })
+  }
+})
+
+test('handshake and the discovery file omit dshVersion when the host version is undetectable', async () => {
+  const { deps, discoveryDir } = makeDeps({
+    getProfileContext: () => undefined,
+    detectHostVersion: async () => undefined,
+  })
+  const core = new BridgeCore(deps)
+  await core.start()
+  try {
+    const client = new TestClient()
+    await client.connect(core.port as number)
+    const hello = await client.request('bridge.handshake')
+    const result = hello.result as Record<string, unknown>
+    assert.equal('dshVersion' in result, false)
+    client.close()
+    const entry = JSON.parse(await readFile(join(discoveryDir, `${process.pid}.json`), 'utf8')) as Record<string, unknown>
+    assert.equal('dshVersion' in entry, false)
+  } finally {
+    await core.stop()
+    await rm(discoveryDir, { recursive: true, force: true })
+  }
+})
+
 test('malformed lines and unknown methods get structured errors', async () => {
   await withCore(() => {}, async (core) => {
     const client = new TestClient()
@@ -457,13 +510,12 @@ test('session title, permission, and preset flows reach the native services', as
     assert.equal((badPermission.error as { code: number }).code, -32602)
 
     const presets = await client.request('preset.list')
-    const roster = presets.result as { default: string; presets: { id: string; trust?: string; isDefault: boolean }[] }
+    const roster = presets.result as { default: string; presets: { id: string; isDefault: boolean; name?: string; description?: string }[] }
     assert.equal(roster.default, 'standard')
     assert.equal(roster.presets.length, 2)
     assert.equal(roster.presets[0]?.isDefault, true)
-    // A host that still publishes `trust` (DSH ≤ 0.1.5) sees it on the wire.
-    assert.equal(roster.presets[0]?.trust, 'system')
-    assert.equal(roster.presets[1]?.trust, 'user')
+    assert.equal(roster.presets[0]?.name, 'Standard')
+    assert.equal(roster.presets[1]?.description, 'Fast model')
 
     const selected = await client.request('preset.select', { sessionId: 's1', presetId: 'fast' })
     assert.equal((selected.result as { selected: string }).selected, 'fast')
@@ -526,6 +578,28 @@ test('subscribers receive matching session events only', async () => {
     assert.equal(params.sessionId, 's1')
     assert.equal(params.event.type, 'session/title')
     assert.equal(params.event.data.title, 'new')
+    client.close()
+  })
+})
+
+test('session.subscribe treats an empty types list as the default set', async () => {
+  await withCore((deps, mocks) => {
+    mocks.live.set('s1', makeSession('s1', '/tmp/project'))
+    void deps
+  }, async (core, mocks) => {
+    const client = new TestClient()
+    await client.connect(core.port as number)
+    const subscribed = await client.request('session.subscribe', { sessionId: 's1', types: [] })
+    const types = (subscribed.result as { types: readonly string[] }).types
+    // The documented fallback (protocol.ts): an empty filter is the default
+    // set, not a subscription to nothing.
+    assert.deepEqual(types, DEFAULT_PUSH_TYPES)
+
+    const s1 = mocks.live.get('s1')
+    assert.notEqual(s1, undefined)
+    core.handleSessionEvent(s1 as never, { type: 'session/title', seq: 11, time: 4, data: { title: 'pushed' } } as never)
+    const notification = await client.nextNotification()
+    assert.equal((notification.params as { event: { type: string } }).event.type, 'session/title')
     client.close()
   })
 })
@@ -686,11 +760,11 @@ test('degraded services report capabilities honestly', async () => {
   })
 })
 
-test('preset.list tolerates a trust-less (DSH 0.1.7) roster', async () => {
+test('preset.list maps the declarative (DSH >= 0.1.7) roster', async () => {
   await withCore((deps) => {
-    // The 0.1.7 AgentPresetRegistry roster entry carries no `trust` (removed
-    // upstream with the declarative-preset split, DSH-0.1.7-J1-03); the wire
-    // mapping must omit the field instead of serializing `undefined`.
+    // The corridor's AgentPresetRegistry roster entry carries optional
+    // name/description/broken fields; the wire mapping must omit absent ones
+    // instead of serializing `undefined`.
     const mutable = deps as unknown as Record<string, unknown>
     mutable.getAgentPresets = () => ({
       defaultId: 'standard',
@@ -1113,7 +1187,7 @@ test('session.exportZip produces a valid ZIP through the real archive module', {
       mutable.sessionPersistence = {
         open: async (id: string) => {
           const log = storedLogs.get(id)
-          assert.notEqual(log, undefined, `persistence.open(${id})`)
+          if (log === undefined) throw new Error(`persistence.open(${id})`)
           return {
             header: log.header,
             read: async () => ({ events: log.events }),

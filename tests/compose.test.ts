@@ -6,7 +6,7 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { createConnection } from 'node:net'
-import { mkdtemp, readFile, rm } from 'node:fs/promises'
+import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { existsSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -70,8 +70,14 @@ test('the function plugin loads, serves, and unloads cleanly in a real Cordis co
       ]
     },
   })
-  // The 0.1.7-shaped preset registry stand-in: roster entries carry no
-  // `trust` (removed upstream with the declarative-preset split).
+  // The launcher-provided profile context (DSH >= 0.1.7): the install anchor
+  // points at the owning CLI's manifest, here a stand-in temp install.
+  const installAnchor = join(workspace, 'dsh-install', 'package.json')
+  await mkdir(join(installAnchor, '..'), { recursive: true })
+  await writeFile(installAnchor, `${JSON.stringify({ name: '@deepseek-ai/dsh', version: '0.1.7-rc.1' })}\n`, 'utf8')
+  ctx.provide('profileContext', { installAnchor })
+  // The corridor's preset registry stand-in: roster entries carry the
+  // declarative shape (DSH >= 0.1.7, DSH-0.1.7-J1-03).
   ctx.provide('agentPresets', {
     defaultId: 'standard',
     list: async () => [
@@ -105,9 +111,13 @@ test('the function plugin loads, serves, and unloads cleanly in a real Cordis co
     const wrong = await roundTrip(payload as { port: number; token: string }, 'bridge.handshake', 'nope')
     assert.equal((wrong.error as { code: number }).code, -32001)
     const hello = await roundTrip(payload as { port: number; token: string }, 'bridge.handshake', (payload as { token: string }).token)
-    const result = hello.result as { plugin: string; protocolVersion: number }
+    const result = hello.result as { plugin: string; protocolVersion: number; dshVersion?: string }
     assert.equal(result.plugin, 'dsh-vscode-bridge')
     assert.equal(result.protocolVersion, 1)
+    // Host-version reporting rides the same composition end to end: the
+    // launcher-provided profileContext anchor is read through ctx.get.
+    assert.equal(result.dshVersion, '0.1.7-rc.1')
+    assert.equal((payload as { dshVersion?: string }).dshVersion, '0.1.7-rc.1')
 
     const workspaces = await roundTrip(payload as { port: number; token: string }, 'workspace.list', (payload as { token: string }).token)
     assert.deepEqual(workspaces.result, { workspaces: [], archivedSessionIds: [] })
@@ -141,8 +151,8 @@ test('the function plugin loads, serves, and unloads cleanly in a real Cordis co
       ],
     })
 
-    // The 0.1.7 preset channel: the trust-less roster roundtrips with the
-    // field omitted (never serialized as `undefined`).
+    // The preset channel: the declarative roster roundtrips with absent
+    // optional fields omitted (never serialized as `undefined`).
     const presets = await roundTrip(payload as { port: number; token: string }, 'preset.list', (payload as { token: string }).token)
     assert.deepEqual(presets.result, {
       default: 'standard',

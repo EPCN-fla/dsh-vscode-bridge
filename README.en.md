@@ -2,7 +2,7 @@
 
 [中文](README.md) | English
 
-A plugin for [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness) (DSH) that gives the [dsh-vscode-lite](https://github.com/EPCN-fla/dsh-vscode-lite) a narrow, token-authenticated JSON-RPC channel into native DSH services — workspace grouping, session titles, session archive, agent presets, permission presets, slash commands, the skill catalog, and session-log export.
+A plugin for [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness) (DSH) that gives the [dsh-lite-vscode](https://github.com/EPCN-fla/dsh-lite-vscode) a narrow, token-authenticated JSON-RPC channel into native DSH services — workspace grouping, session titles, session archive, agent presets, permission presets, slash commands, the skill catalog, and session-log export.
 
 The ACP surface is automation-only: titles, deletion, workspace grouping, presets, and permission modes never cross the ACP wire. With this plugin loaded, the extension talks to the harness's own services directly.
 
@@ -24,6 +24,7 @@ This plugin closes that gap from inside the harness process: a loopback TCP list
 - **Skill catalog**: read-only listing of project- and user-level skills (stable fields: name, description, source, …); actual invocation stays with the model-side skill tool, whose catalog is injected inside DSH.
 - **Session-log export**: stream one session's logical log — subagent descendants and referenced attachments included — into a ZIP file on the host; archive bytes never cross the ndjson channel, so large logs stay memory-bounded.
 - **Honest capabilities**: `bridge.handshake` reports what this deployment can actually do; a missing optional service degrades one method family, never the whole plugin.
+- **Host version reporting**: the handshake and the discovery file carry `dshVersion` (the host DSH version, e.g. `0.1.7-rc.1`) so the extension can adapt to the host it connected to; the field is omitted — never guessed — when undetectable.
 
 ## How it works
 
@@ -40,15 +41,25 @@ flowchart LR
 ```
 
 1. The plugin binds the first free port in its configured range, so several harness processes (one per editor window) coexist without coordination.
-2. It publishes `{ port, token, pid, protocolVersion, capabilities, directories }` as `$HOME/.dsh/vscode-bridge/<pid>.json` (mode 0600, atomic write); `directories` lists the process cwd, every live session cwd, and every known workspace path so the extension can match its instance. The file is removed on unload, and stale entries are reaped on startup via pid liveness. Workspace directories are no longer written to.
+2. It publishes `{ port, token, pid, protocolVersion, dshVersion?, capabilities, directories }` as `$HOME/.dsh/vscode-bridge/<pid>.json` (mode 0600, atomic write); `directories` lists the process cwd, every live session cwd, and every known workspace path so the extension can match its instance. The file is removed on unload, and stale entries are reaped on startup via pid liveness. Workspace directories are no longer written to.
 3. Every request carries the token in a top-level `token` field; loopback plus file permissions are the whole access boundary.
 4. WSL2's `localhostForwarding` lets a Windows-side extension reach a WSL-side listener transparently.
 
 ## Install
 
-Compatible with deepseek-harness **0.1.5-rc.2** and **0.1.7-rc.1** (`@deepseek-ai/dsh-*` packages ≥ 0.1.5-rc.2). The plugin declares no DSH package in `peerDependencies`, so the 0.1.7 install/startup peer enforcement (DSH-0.1.7-J1-01) does not gate it.
+Requires deepseek-harness `0.1.7-rc.1` or `>=0.2.0-rc.1 <0.2.0` — each admitted version passed a source-level audit (see `docs/0.3.0-upgrade.md`); unlisted versions are unverified. 0.1.5 DSH leaves the support corridor with 0.3.0; 0.1.5 hosts should stay on plugin 0.2.x.
 
-The plugin must be loaded into a custom profile carrying both the `dsh-base` and `dsh-acp-app` bundles. DSH ships no ready-made acp profile: a custom profile initialized by `dsh plugin` starts with `dsh-base` only, so you add the `dsh-acp-app` bundle by hand, plus the service rows the ACP composition does not ship (`workspace`, the preset-registry row, and the subagent model-route host row the `standard` preset mounts). The preset-registry row depends on the host version: on 0.1.5 it is `agent-presets` (`@deepseek-ai/dsh-agent-presets`, with `config.default`); on 0.1.7 presets are declarative (DSH-0.1.7-J1-03) — the registry row is `agent-preset-registry` (`@deepseek-ai/dsh-agent-preset-registry`, `config: { default: standard }`) and each preset needs its own `@deepseek-ai/dsh-agent-preset` declaration row (see the web-app bundle's `presets/*.patch.yml`). Without the service the bridge still loads; its `presets` capability reports unavailable.
+| Plugin version | Supported DSH versions |
+| --- | --- |
+| 0.3.0 | `0.1.7-rc.1 \|\| >=0.2.0-rc.1 <0.2.0` |
+| 0.2.0 ~ 0.2.1 | `>=0.1.5-rc.2 <0.1.5 \|\| 0.1.7-rc.1` |
+| 0.1.2 ~ 0.1.3 | `>=0.1.5-rc.2 <0.1.5` |
+
+The plugin declares no DSH package in `peerDependencies`, so peer enforcement does not gate it — neither the 0.1.7 install/startup checks (DSH-0.1.7-J1-01) nor the composition-time compatibility preflight added in 0.2.0 (which disables rows whose declared `@deepseek-ai/dsh*` peers are unsatisfied; `dsh plugin allow-version` grants an exact-version exemption) looks at plugins without DSH peers.
+
+The plugin must be loaded into a custom profile carrying both the `dsh-base` and `dsh-acp-app` bundles. DSH ships no ready-made acp profile: a custom profile initialized by `dsh plugin` starts with `dsh-base` only, so you add the `dsh-acp-app` bundle by hand, plus the service rows the ACP composition does not ship (`workspace`, the preset-registry row, and the subagent model-route host row the `standard` preset mounts). The preset-registry row is stable across the corridor: presets are declarative since 0.1.7 (DSH-0.1.7-J1-03) — the registry row is `agent-preset-registry` (`@deepseek-ai/dsh-agent-preset-registry`, `config: { default: standard }`) and each preset needs its own `@deepseek-ai/dsh-agent-preset` declaration row (see the web-app bundle's `presets/*.patch.yml`, byte-identical between 0.1.7 and 0.2.0). Without the service the bridge still loads; its `presets` capability reports unavailable.
+
+All three options use the DSH CLI to add the plugin to a given profile (`acp-vscode` in the examples; substitute as needed).
 
 ### From npm
 
@@ -56,6 +67,14 @@ The plugin must be loaded into a custom profile carrying both the `dsh-base` and
 # A missing profile is initialized on the spot (with the dsh-base bundle only).
 dsh plugin --profile acp-vscode add dsh-vscode-bridge
 ```
+
+### From GitHub
+
+```sh
+dsh plugin --profile acp-vscode add github:EPCN-fla/dsh-vscode-bridge
+```
+
+When installed from a git source, pnpm runs the package's `prepare` script to build it automatically (requires Node `>=22`).
 
 ### From tarball
 
@@ -90,25 +109,36 @@ First add the ACP app to the bundle list in `$DSH_HOME/profiles/acp-vscode/packa
 }
 ```
 
-Then register the plugin and the missing service rows in `cordis.patch.yml` next to it:
+Then register the plugin and the missing service rows in `cordis.patch.yml` next to it. 0.1.7 and 0.2.0 hosts share one row set:
 
 ```yaml
 # Insert the rows the ACP composition does not ship.
 - insert:
     - id: workspace
       name: '@deepseek-ai/dsh-workspace'
-    - id: agent-presets
-      name: '@deepseek-ai/dsh-agent-presets'
+    # Presets are declarative since 0.1.7 (DSH-0.1.7-J1-03): a registry row
+    # plus one declaration row per preset.
+    - id: agent-preset-registry
+      name: '@deepseek-ai/dsh-agent-preset-registry'
       config:
         default: standard
-    # The standard preset's subagent model routes read this host row
-    # (shipped by the web bundle, absent from the ACP composition).
     - id: subagent-model-selection-settings
       name: '@deepseek-ai/dsh-tool-subagent/model-selection-settings'
     - id: dsh-vscode-bridge
       name: 'dsh-vscode-bridge'
       # config: { portStart: 7310, portEnd: 7319 }   # optional overrides
 
+# Preset declaration rows: copy the web-app bundle's
+# presets/{standard,ptc,minimal,cordis}.patch.yml verbatim (the npm package's
+# files field includes them; the extension's one-click install command
+# writes them for you).
+```
+
+Never copy the 0.1.5-era `agent-presets` row from an old profile — the package was split and removed in 0.1.7 (DSH-0.1.7-J1-03); on any corridor host the row fails to import (entry-level failure), the `agentPresets` service goes missing, and the preset picker disappears. The extension's one-click install strips such legacy rows and adds the declaration rows (leaving a `.bak` backup).
+
+The optional permission-metadata block below applies across the corridor:
+
+```yaml
 # Optional: add display names and descriptions to the three permission
 # states (the base table carries only sandbox/approval, no name/description
 # metadata).
@@ -132,7 +162,7 @@ Then register the plugin and the missing service rows in `cordis.patch.yml` next
         description: Full file access without approval prompts.
 ```
 
-Finally point the extension at the profile by setting `dsh.profile` to `acp-vscode` (the extension's one-click install automates the whole sequence).
+Finally point the extension at the profile by setting `dsh.profile` to `acp-vscode` (the extension's one-click install automates the whole sequence: it picks the row set matching the host's `dsh --version` — one declarative set covers 0.1.7 and 0.2.0 — and migrates profiles written by older installers); hand-writing the YAML is only recommended when you customize.
 
 ## Wire protocol
 
@@ -151,14 +181,14 @@ One JSON object per line, both directions, standard JSON-RPC 2.0 envelope.
 
 | Method | Params | Result |
 |---|---|---|
-| `bridge.handshake` | — | `{ protocolVersion, plugin, version, pid, startedAt, capabilities }` |
+| `bridge.handshake` | — | `{ protocolVersion, plugin, version, dshVersion?, pid, startedAt, capabilities }` — `dshVersion` is the host DSH version (e.g. `0.1.7-rc.1`), omitted when undetectable |
 | `session.list` | `{ includeStored? }` | `{ sessions: LiveSessionInfo[], storedIncluded, stored? }` |
 | `session.get` | `{ sessionId }` | live row, or a stored row with the folded title |
 | `session.setTitle` | `{ sessionId, title }` | `{ sessionId, title, updatedAt }` — live sessions only |
 | `session.delete` | `{ sessionId }` | `{ sessionId, archived: true }` — a session with live activity (a running turn) is refused with `-32009 session/active` (DSH ≥ 0.1.7); an unknown session with `-32004 session/not-found` |
 | `session.subscribe` | `{ sessionId?, types? }` | `{ subscribed: true, types }`; events arrive as `bridge.event` notifications |
 | `session.unsubscribe` | — | `{ subscribed: false }` |
-| `preset.list` | — | `{ default, presets: [{ id, trust?, name?, description?, broken?, isDefault }] }` — `trust` (`'system' \| 'user'`) is only published by 0.1.5 hosts; upstream removed the field in 0.1.7 |
+| `preset.list` | — | `{ default, presets: [{ id, name?, description?, broken?, isDefault }] }` |
 | `preset.current` | `{ sessionId }` | `{ sessionId, preset }` |
 | `preset.select` | `{ sessionId, presetId }` | `{ sessionId, selected }`; fails with `agent-preset/locked` once the session has started |
 | `permission.get` | `{ sessionId? }` | `{ options: [{ value, name, description? }], default, current? }` |
@@ -190,7 +220,8 @@ Error codes: standard JSON-RPC (`-32700` parse, `-32600` invalid request, `-3260
 - **Rename and permission/preset switches require a live session.** A stored (not running) session must be resumed through ACP first; stored titles remain readable via `session.get`.
 - **"Delete" is archive**: the session disappears from every grouping surface, but its event log stays on disk. Physical deletion is not a public DSH API.
 - **Preset switching is blank-session only** (the upstream `agent-preset/locked` contract): once a turn has run, the composition is fixed.
-- **`agentPresets` is optional.** Without the `agent-presets` patch row the plugin still loads; `preset.*` then answers `service-unavailable` and the handshake reports `presets: false`.
+- **`agentPresets` is optional.** With the preset-registration rows missing (the `agent-preset-registry` row plus the declaration rows) the plugin still loads; `preset.*` then answers `service-unavailable` and the handshake reports `presets: false`.
+- **`dshVersion` depends on detectable install facts.** Tried in order: the launcher-provided `profileContext.installAnchor` (every corridor host provides it), the CLI entry in `process.argv[1]` (covers launches without a `profileContext`), then module resolution from the plugin's own location (development checkouts). When none applies (custom compositions, some packaged hosts) the field is absent — clients must treat it as optional and never assume a default.
 - **`commands`/`skills`/`sessionExport` are optional too.** When the ACP composition lacks the service rows the plugin still loads, the affected method family answers `service-unavailable`, and the handshake reports the flag as `false`; the archive module is only resolved lazily on first use, so an unresolvable module never affects plugin load.
 - **Export does not go through the Web `/export` command.** That command needs the `connection` service the ACP composition does not mount; the bridge bypasses the command layer, reuses the archive module directly, and has `session.exportZip` produce the ZIP file on the host (descendant logs included) without streaming bytes over ndjson.
 - **`command.run` is live-session only and attachment-free.** ACP has no staged-receipt channel, so attachments are always submitted empty; when a command declares it needs them, the upstream error text passes through verbatim as a `kind:'error'` result. Busy sessions are not pre-checked: compact reports `busy` itself, plan answers `queued`.
@@ -200,7 +231,7 @@ Error codes: standard JSON-RPC (`-32700` parse, `-32600` invalid request, `-3260
 
 ## Development
 
-Requires Node `>=20` (developed on Node 24).
+Requires Node `>=22` (engines; CI runs the full suite on both 22 and 24). Running the type-stripped TS tests directly (`node --test`) additionally needs ≥ `22.18` or ≥ `23.6` (unflagged type stripping), which the latest 22.x CI resolves to satisfies out of the box.
 
 ```sh
 pnpm install
@@ -215,8 +246,9 @@ All tests live in `tests/`:
 |---|---|
 | `tests/server.test.ts` | Port scanning, ndjson framing, line-limit disconnect, listener lifecycle |
 | `tests/discovery.test.ts` | Publish/replace/clear of the mode-0600 discovery file, dead-pid stale sweep, unwritable directories |
-| `tests/core.test.ts` | Token auth, every RPC method against mocked services, upstream error-code passthrough, event push filtering, degraded-service capabilities |
-| `tests/compose.test.ts` | Real Cordis composition: plugin load → discovery file → TCP handshake → RPC → clean unload |
+| `tests/core.test.ts` | Token auth, every RPC method against mocked services, upstream error-code passthrough, event push filtering, degraded-service capabilities, `dshVersion` presence/omission on handshake and discovery |
+| `tests/host-version.test.ts` | Host-version detection: anchor direct read, anchor-relative resolution (CLI / cohort witness), the argv fallback, source priority, honest absence (resolution jailed to throwaway trees, immune to the machine's own node_modules) |
+| `tests/compose.test.ts` | Real Cordis composition: plugin load → discovery file → TCP handshake (`dshVersion` end to end) → RPC → clean unload |
 
 ### Directory structure
 
@@ -224,6 +256,7 @@ All tests live in `tests/`:
 src/
   index.ts        plugin entry (name/inject/Config/apply, Cordis wiring)
   core.ts         BridgeCore: attach logic, RPC dispatch, event push
+  host-version.ts host DSH version detection (profileContext anchor → CLI entry → local resolution)
   server.ts       ndjson JSON-RPC/TCP transport with port-range scanning
   discovery.ts    <pid>.json discovery publish/retract (atomic, mode 0600, stale sweep)
   protocol.ts     wire types, error codes, capability flags
