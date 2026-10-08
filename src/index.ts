@@ -125,8 +125,8 @@ export function apply(ctx: Context, config: BridgePluginConfig): void {
     getAgentPresets: () => ctx.get('agentPresets'),
     getCommands: () => ctx.get('commands'),
     getSkills: () => ctx.get('skills'),
-    // Provided by the dsh launcher (≥ 0.1.7) before the tree mounts; absent
-    // on 0.1.5. Feeds host-version detection for `dshVersion` on the wire.
+    // Provided by the dsh launcher before the tree mounts on every supported
+    // host (≥ 0.1.7). Feeds host-version detection for `dshVersion` on the wire.
     getProfileContext: () => ctx.get('profileContext'),
     // Probed without their type-merge packages: the bridge only forwards the
     // values into the lazily imported archive module, which type-checks them.

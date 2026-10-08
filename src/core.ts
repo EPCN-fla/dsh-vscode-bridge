@@ -121,8 +121,9 @@ export interface BridgeCoreDeps {
   /** Lazy lookup: `skills` is optional and resolved at request time. */
   readonly getSkills: () => SkillRegistry | undefined
   /**
-   * Lazy probe for the launcher-provided `profileContext` (DSH ≥ 0.1.7;
-   * absent on 0.1.5). Only its `installAnchor` feeds host-version detection.
+   * Lazy probe for the launcher-provided `profileContext` (present on every
+   * supported host, DSH ≥ 0.1.7). Only its `installAnchor` feeds host-version
+   * detection.
    */
   readonly getProfileContext?: () => ProfileContextSlice | undefined
   /**
@@ -533,10 +534,9 @@ export class BridgeCore {
       if (name === 'WorkspaceUnknownSessionError') {
         throw new BridgeRpcError(RPC_NOT_FOUND, `unknown session: ${sessionId}`, { code: 'session/not-found' })
       }
-      // DSH 0.1.7 refuses to archive a session with live activity (a running
+      // DSH ≥ 0.1.7 refuses to archive a session with live activity (a running
       // turn). Surface a structured code so clients can offer stop-then-retry
-      // instead of parsing the upstream message; on 0.1.5 hosts the error
-      // class does not exist and this branch never matches.
+      // instead of parsing the upstream message.
       if (name === 'WorkspaceActiveSessionError') {
         throw new BridgeRpcError(RPC_CONFLICT, String((error as Error).message ?? error), { code: 'session/active' })
       }

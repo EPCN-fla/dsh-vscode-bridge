@@ -5,14 +5,14 @@
  * from the plugin's own module path — so the version has to come from
  * in-process launch facts. Three sources are tried in order:
  *
- * 1. The launcher-provided `profileContext` service (DSH ≥ 0.1.7; absent on
- *    0.1.5). Its `installAnchor` is the absolute path of the owning dsh
- *    app's `package.json` — for the dsh CLI that manifest IS
- *    `@deepseek-ai/dsh`, so its `version` field is the DSH version.
+ * 1. The launcher-provided `profileContext` service (present on every
+ *    supported host, DSH ≥ 0.1.7). Its `installAnchor` is the absolute path
+ *    of the owning dsh app's `package.json` — for the dsh CLI that manifest
+ *    IS `@deepseek-ai/dsh`, so its `version` field is the DSH version.
  *    Packaged apps anchor at their own manifest instead, in which case the
  *    CLI (then a cohort package) is resolved from the anchor.
- * 2. The CLI entry in `process.argv[1]` — covers CLI-launched 0.1.5 hosts
- *    that provide no `profileContext`.
+ * 2. The CLI entry in `process.argv[1]` — covers CLI launches where no
+ *    `profileContext` was provided (custom compositions, older hosts).
  * 3. Module resolution from the plugin's own location — development
  *    checkouts where the cohort packages are devDependencies.
  *
@@ -29,8 +29,8 @@ import type { BridgeTransportLogger } from './server.ts'
 
 /**
  * Narrow structural slice of the launcher-provided `profileContext` service
- * (`@deepseek-ai/dsh-app-boot`; provided before the tree mounts on dsh
- * ≥ 0.1.7, absent on 0.1.5). Only the install anchor is consumed.
+ * (`@deepseek-ai/dsh-app-boot`; provided before the tree mounts on every
+ * supported host, DSH ≥ 0.1.7). Only the install anchor is consumed.
  */
 export interface ProfileContextSlice {
   /** Absolute path of the owning dsh app's package.json. */
