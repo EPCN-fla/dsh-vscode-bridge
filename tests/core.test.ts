@@ -11,6 +11,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { BridgeCore, matchesEventType } from '../src/core.ts'
 import type { BridgeCoreDeps } from '../src/core.ts'
+import { DEFAULT_PUSH_TYPES } from '../src/protocol.ts'
 
 const silent = { info() {}, warn() {}, error() {} }
 
@@ -577,6 +578,28 @@ test('subscribers receive matching session events only', async () => {
     assert.equal(params.sessionId, 's1')
     assert.equal(params.event.type, 'session/title')
     assert.equal(params.event.data.title, 'new')
+    client.close()
+  })
+})
+
+test('session.subscribe treats an empty types list as the default set', async () => {
+  await withCore((deps, mocks) => {
+    mocks.live.set('s1', makeSession('s1', '/tmp/project'))
+    void deps
+  }, async (core, mocks) => {
+    const client = new TestClient()
+    await client.connect(core.port as number)
+    const subscribed = await client.request('session.subscribe', { sessionId: 's1', types: [] })
+    const types = (subscribed.result as { types: readonly string[] }).types
+    // The documented fallback (protocol.ts): an empty filter is the default
+    // set, not a subscription to nothing.
+    assert.deepEqual(types, DEFAULT_PUSH_TYPES)
+
+    const s1 = mocks.live.get('s1')
+    assert.notEqual(s1, undefined)
+    core.handleSessionEvent(s1 as never, { type: 'session/title', seq: 11, time: 4, data: { title: 'pushed' } } as never)
+    const notification = await client.nextNotification()
+    assert.equal((notification.params as { event: { type: string } }).event.type, 'session/title')
     client.close()
   })
 })

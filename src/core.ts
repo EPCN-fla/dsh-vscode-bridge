@@ -550,7 +550,8 @@ export class BridgeCore {
     const types = optionalStringArray(params, 'types')
     const subscription: SubscriptionState = {
       ...(sessionId === undefined ? {} : { sessionId }),
-      types: types ?? DEFAULT_PUSH_TYPES,
+      // Documented contract: omitted OR empty subscribes to the default set.
+      types: types === undefined || types.length === 0 ? DEFAULT_PUSH_TYPES : types,
     }
     this.subscriptions.set(connectionId, subscription)
     return { subscribed: true, types: subscription.types }
