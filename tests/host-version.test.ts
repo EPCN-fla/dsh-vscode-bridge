@@ -106,7 +106,7 @@ test('cohort package witnesses the version when the CLI itself is not resolvable
   assert.equal(version, '9.9.7-cohort')
 }))
 
-test('the CLI entry path covers hosts that provide no profileContext (0.1.5)', withTempTree(async (root) => {
+test('the CLI entry path covers hosts that provide no profileContext', withTempTree(async (root) => {
   const entry = await writeFakeCli(root, '0.1.5-rc.2')
   const version = await detectDshVersion(jailed(root, { argvPath: entry }))
   assert.equal(version, '0.1.5-rc.2')
@@ -121,7 +121,7 @@ test('the install anchor outranks the argv fallback', withTempTree(async (root) 
 }))
 
 test('undetectable hosts report undefined rather than guessing', withTempTree(async (root) => {
-  // No profileContext (a 0.1.5 custom composition), a bogus CLI entry, and
+  // No profileContext (a custom composition), a bogus CLI entry, and
   // an empty plugin-local base: every source dries up.
   const version = await detectDshVersion(jailed(root))
   assert.equal(version, undefined)
