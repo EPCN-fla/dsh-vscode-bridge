@@ -10,6 +10,12 @@
     "bridge"
   ],
   "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/EPCN-fla/dsh-vscode-bridge.git"
+  },
+  "bugs": "https://github.com/EPCN-fla/dsh-vscode-bridge/issues",
+  "homepage": "https://github.com/EPCN-fla/dsh-vscode-bridge#readme",
   "type": "module",
   "packageManager": "pnpm@11.7.0",
   "main": "lib/index.js",
@@ -31,6 +37,7 @@
   },
   "scripts": {
     "prepack": "pnpm run build",
+    "prepare": "pnpm run build",
     "build": "tsc -p tsconfig.json",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "test": "node --test tests/*.test.ts"
