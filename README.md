@@ -47,9 +47,19 @@ flowchart LR
 
 ## 安装
 
-兼容 deepseek-harness **0.1.7-rc.1**、**0.2.0-rc.1** 与 **0.2.0-rc.2**（0.1.5 自本版起移出支持走廊；0.1.5 主机请停留在插件 0.2.x）。插件未在 `peerDependencies` 声明 DSH 包，因此不受 peer 版本强制约束——0.1.7 的安装/启动检查（DSH-0.1.7-J1-01）与 0.2.0 新增的 profile 组合期兼容预审（不满足 `@deepseek-ai/dsh*` peer 的行会被禁用，可用 `dsh plugin allow-version` 授予精确版本豁免）都只检查声明了 DSH peer 的插件。
+要求：deepseek-harness **0.1.7 预发布线（rc.1）或 0.2.0 预发布线（rc.1 / rc.2）**——逐版本经源码级审计验证（见 `docs/0.3.0-upgrade.md`）；未列出的版本未经核对。0.1.5 自 0.3.0 起移出支持走廊，0.1.5 主机请停留在插件 0.2.x。
+
+| 插件版本 | 适配的 DSH 版本 |
+| --- | --- |
+| 0.3.0 | 0.1.7-rc.1，0.2.0-rc.1 / 0.2.0-rc.2 |
+| 0.2.0 ~ 0.2.1 | 0.1.5-rc.2 / 0.1.5-rc.3，0.1.7-rc.1 |
+| 0.1.2 ~ 0.1.3 | 0.1.5 预发布线（≥ rc.2） |
+
+插件未在 `peerDependencies` 声明 DSH 包，因此不受 peer 版本强制约束——0.1.7 的安装/启动检查（DSH-0.1.7-J1-01）与 0.2.0 新增的 profile 组合期兼容预审（不满足 `@deepseek-ai/dsh*` peer 的行会被禁用，可用 `dsh plugin allow-version` 授予精确版本豁免）都只检查声明了 DSH peer 的插件。
 
 插件要装进一个同时携带 `dsh-base` 与 `dsh-acp-app` 两个 bundle 的自建 profile。DSH 默认不带现成的 acp profile：`dsh plugin` 初始化出的自建 profile 只有 `dsh-base`，需要手动补上 `dsh-acp-app` bundle，以及 ACP 组合没有的几行服务（`workspace`、预设注册行，外加 `standard` 预设挂载所需的子代理模型路由宿主行）。预设注册行在走廊内不变：0.1.7 起预设为声明式（DSH-0.1.7-J1-03），注册行是 `agent-preset-registry`（`@deepseek-ai/dsh-agent-preset-registry`，`config: { default: standard }`），每个预设另需一条 `@deepseek-ai/dsh-agent-preset` 声明行（可参考 web-app bundle 的 `presets/*.patch.yml`，其行形状在 0.1.7 与 0.2.0 间逐字一致）。该服务未挂载时桥接照常加载，`presets` 能力降级为不可用。
+
+三种方式都通过 DSH CLI 把插件加入指定的 Profile（这里以 `acp-vscode` 为例，按需替换）。
 
 ### 从 npm 安装
 
@@ -57,6 +67,14 @@ flowchart LR
 # profile 不存在时自动初始化（初始仅含 dsh-base bundle）
 dsh plugin --profile acp-vscode add dsh-vscode-bridge
 ```
+
+### 从 GitHub 安装
+
+```sh
+dsh plugin --profile acp-vscode add github:EPCN-fla/dsh-vscode-bridge
+```
+
+通过 git 源安装时，pnpm 会执行包的 `prepare` 脚本自动完成构建（要求 Node `>=20`）。
 
 ### 从 tarball 安装
 
@@ -209,7 +227,7 @@ dsh plugin --profile acp-vscode add /absolute/path/to/dsh-vscode-bridge
 
 ## 开发
 
-要求 Node `>=20`（在 Node 24 上开发）。
+运行时产物兼容 Node `>=20`（engines；CI 有专门的 Node 20 构建+导入冒烟腿）。开发与测试需要 Node ≥ `22.18` 或 ≥ `23.6`：`node --test` 直跑 type-stripped TS，依赖不带旗标的类型擦除（CI 在 22/24 上跑全量）。
 
 ```sh
 pnpm install

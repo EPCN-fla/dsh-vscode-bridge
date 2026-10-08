@@ -47,9 +47,19 @@ flowchart LR
 
 ## Install
 
-Compatible with deepseek-harness **0.1.7-rc.1**, **0.2.0-rc.1**, and **0.2.0-rc.2** (0.1.5 leaves the support corridor with this release; 0.1.5 hosts should stay on plugin 0.2.x). The plugin declares no DSH package in `peerDependencies`, so peer enforcement does not gate it — neither the 0.1.7 install/startup checks (DSH-0.1.7-J1-01) nor the composition-time compatibility preflight added in 0.2.0 (which disables rows whose declared `@deepseek-ai/dsh*` peers are unsatisfied; `dsh plugin allow-version` grants an exact-version exemption) looks at plugins without DSH peers.
+Requires deepseek-harness **0.1.7 prerelease line (rc.1) or 0.2.0 prerelease line (rc.1 / rc.2)** — each admitted version passed a source-level audit (see `docs/0.3.0-upgrade.md`); unlisted versions are unverified. 0.1.5 leaves the support corridor with 0.3.0; 0.1.5 hosts should stay on plugin 0.2.x.
+
+| Plugin version | Supported DSH versions |
+| --- | --- |
+| 0.3.0 | 0.1.7-rc.1, 0.2.0-rc.1 / 0.2.0-rc.2 |
+| 0.2.0 ~ 0.2.1 | 0.1.5-rc.2 / 0.1.5-rc.3, 0.1.7-rc.1 |
+| 0.1.2 ~ 0.1.3 | 0.1.5 prerelease line (≥ rc.2) |
+
+The plugin declares no DSH package in `peerDependencies`, so peer enforcement does not gate it — neither the 0.1.7 install/startup checks (DSH-0.1.7-J1-01) nor the composition-time compatibility preflight added in 0.2.0 (which disables rows whose declared `@deepseek-ai/dsh*` peers are unsatisfied; `dsh plugin allow-version` grants an exact-version exemption) looks at plugins without DSH peers.
 
 The plugin must be loaded into a custom profile carrying both the `dsh-base` and `dsh-acp-app` bundles. DSH ships no ready-made acp profile: a custom profile initialized by `dsh plugin` starts with `dsh-base` only, so you add the `dsh-acp-app` bundle by hand, plus the service rows the ACP composition does not ship (`workspace`, the preset-registry row, and the subagent model-route host row the `standard` preset mounts). The preset-registry row is stable across the corridor: presets are declarative since 0.1.7 (DSH-0.1.7-J1-03) — the registry row is `agent-preset-registry` (`@deepseek-ai/dsh-agent-preset-registry`, `config: { default: standard }`) and each preset needs its own `@deepseek-ai/dsh-agent-preset` declaration row (see the web-app bundle's `presets/*.patch.yml`, byte-identical between 0.1.7 and 0.2.0). Without the service the bridge still loads; its `presets` capability reports unavailable.
+
+All three options use the DSH CLI to add the plugin to a given profile (`acp-vscode` in the examples; substitute as needed).
 
 ### From npm
 
@@ -57,6 +67,14 @@ The plugin must be loaded into a custom profile carrying both the `dsh-base` and
 # A missing profile is initialized on the spot (with the dsh-base bundle only).
 dsh plugin --profile acp-vscode add dsh-vscode-bridge
 ```
+
+### From GitHub
+
+```sh
+dsh plugin --profile acp-vscode add github:EPCN-fla/dsh-vscode-bridge
+```
+
+When installed from a git source, pnpm runs the package's `prepare` script to build it automatically (requires Node `>=20`).
 
 ### From tarball
 
@@ -213,7 +231,7 @@ Error codes: standard JSON-RPC (`-32700` parse, `-32600` invalid request, `-3260
 
 ## Development
 
-Requires Node `>=20` (developed on Node 24).
+The runtime artifact supports Node `>=20` (engines; a dedicated CI leg builds and import-smokes it on Node 20). Development and tests require Node ≥ `22.18` or ≥ `23.6`: `node --test` runs type-stripped TS directly and needs unflagged type stripping (CI runs the full suite on 22/24).
 
 ```sh
 pnpm install
