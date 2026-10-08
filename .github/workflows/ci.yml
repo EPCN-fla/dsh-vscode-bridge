@@ -80,7 +80,13 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      # pnpm 11（packageManager 钉的版本）自身要求 Node ≥ 22.13
+      # （依赖 node:sqlite），在 Node 20 下连 `pnpm store path` 都起不来——
+      # setup-node 的 cache 探测就会先崩。本腿只验证编译产物在 20 上可运行，
+      # 用 pnpm 10（支持 Node ≥ 18.12；lockfileVersion 9.0 与 pnpm 11 通用）。
       - uses: pnpm/action-setup@v4
+        with:
+          version: 10
 
       - uses: actions/setup-node@v4
         with:
