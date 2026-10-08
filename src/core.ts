@@ -61,13 +61,13 @@ type SessionLogExportReady = import('@deepseek-ai/dsh-session-log-export').Sessi
 
 /**
  * The wire-relevant shape of one agent-preset roster entry. `trust`
- * (`'system' | 'user'`) existed through DSH 0.1.5 and was removed upstream in
- * 0.1.7 when presets became declarative (DSH-0.1.7-J1-03); it crosses the
- * wire only when the host still publishes it.
+ * (`'system' | 'user'`) was removed upstream in 0.1.7 when presets became
+ * declarative (DSH-0.1.7-J1-03); with the support corridor now starting at
+ * 0.1.7, no supported host publishes it and the field no longer crosses the
+ * wire.
  */
 export interface AgentPresetListEntry {
   readonly id: string
-  readonly trust?: string
   readonly name?: string
   readonly description?: string
   readonly broken?: string
@@ -571,9 +571,6 @@ export class BridgeCore {
       default: defaultId,
       presets: roster.map((preset) => ({
         id: preset.id,
-        // `trust` left the upstream type in DSH 0.1.7; forward it only when
-        // the host still publishes it (see AgentPresetListEntry).
-        ...(preset.trust === undefined ? {} : { trust: preset.trust }),
         isDefault: preset.id === defaultId,
         ...(preset.name === undefined ? {} : { name: preset.name }),
         ...(preset.description === undefined ? {} : { description: preset.description }),

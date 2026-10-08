@@ -106,8 +106,8 @@ function makeMocks() {
     agentPresets: {
       defaultId: 'standard',
       list: async () => [
-        { id: 'standard', trust: 'system', name: 'Standard' },
-        { id: 'fast', trust: 'user', description: 'Fast model' },
+        { id: 'standard', name: 'Standard' },
+        { id: 'fast', description: 'Fast model' },
       ],
       composedPreset: () => 'standard',
       select: async (_agent: unknown, presetId: string) => {
@@ -509,13 +509,12 @@ test('session title, permission, and preset flows reach the native services', as
     assert.equal((badPermission.error as { code: number }).code, -32602)
 
     const presets = await client.request('preset.list')
-    const roster = presets.result as { default: string; presets: { id: string; trust?: string; isDefault: boolean }[] }
+    const roster = presets.result as { default: string; presets: { id: string; isDefault: boolean; name?: string; description?: string }[] }
     assert.equal(roster.default, 'standard')
     assert.equal(roster.presets.length, 2)
     assert.equal(roster.presets[0]?.isDefault, true)
-    // A host that still publishes `trust` (DSH ≤ 0.1.5) sees it on the wire.
-    assert.equal(roster.presets[0]?.trust, 'system')
-    assert.equal(roster.presets[1]?.trust, 'user')
+    assert.equal(roster.presets[0]?.name, 'Standard')
+    assert.equal(roster.presets[1]?.description, 'Fast model')
 
     const selected = await client.request('preset.select', { sessionId: 's1', presetId: 'fast' })
     assert.equal((selected.result as { selected: string }).selected, 'fast')
@@ -738,11 +737,11 @@ test('degraded services report capabilities honestly', async () => {
   })
 })
 
-test('preset.list tolerates a trust-less (DSH 0.1.7) roster', async () => {
+test('preset.list maps the declarative (DSH >= 0.1.7) roster', async () => {
   await withCore((deps) => {
-    // The 0.1.7 AgentPresetRegistry roster entry carries no `trust` (removed
-    // upstream with the declarative-preset split, DSH-0.1.7-J1-03); the wire
-    // mapping must omit the field instead of serializing `undefined`.
+    // The corridor's AgentPresetRegistry roster entry carries optional
+    // name/description/broken fields; the wire mapping must omit absent ones
+    // instead of serializing `undefined`.
     const mutable = deps as unknown as Record<string, unknown>
     mutable.getAgentPresets = () => ({
       defaultId: 'standard',

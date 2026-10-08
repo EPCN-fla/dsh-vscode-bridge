@@ -76,8 +76,8 @@ test('the function plugin loads, serves, and unloads cleanly in a real Cordis co
   await mkdir(join(installAnchor, '..'), { recursive: true })
   await writeFile(installAnchor, `${JSON.stringify({ name: '@deepseek-ai/dsh', version: '0.1.7-rc.1' })}\n`, 'utf8')
   ctx.provide('profileContext', { installAnchor })
-  // The 0.1.7-shaped preset registry stand-in: roster entries carry no
-  // `trust` (removed upstream with the declarative-preset split).
+  // The corridor's preset registry stand-in: roster entries carry the
+  // declarative shape (DSH >= 0.1.7, DSH-0.1.7-J1-03).
   ctx.provide('agentPresets', {
     defaultId: 'standard',
     list: async () => [
@@ -151,8 +151,8 @@ test('the function plugin loads, serves, and unloads cleanly in a real Cordis co
       ],
     })
 
-    // The 0.1.7 preset channel: the trust-less roster roundtrips with the
-    // field omitted (never serialized as `undefined`).
+    // The preset channel: the declarative roster roundtrips with absent
+    // optional fields omitted (never serialized as `undefined`).
     const presets = await roundTrip(payload as { port: number; token: string }, 'preset.list', (payload as { token: string }).token)
     assert.deepEqual(presets.result, {
       default: 'standard',
