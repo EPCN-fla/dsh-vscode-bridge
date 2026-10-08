@@ -74,7 +74,7 @@ dsh plugin --profile acp-vscode add dsh-vscode-bridge
 dsh plugin --profile acp-vscode add github:EPCN-fla/dsh-vscode-bridge
 ```
 
-When installed from a git source, pnpm runs the package's `prepare` script to build it automatically (requires Node `>=20`).
+When installed from a git source, pnpm runs the package's `prepare` script to build it automatically (requires Node `>=22`).
 
 ### From tarball
 
@@ -231,7 +231,7 @@ Error codes: standard JSON-RPC (`-32700` parse, `-32600` invalid request, `-3260
 
 ## Development
 
-The runtime artifact supports Node `>=20` (engines; a dedicated CI leg builds and import-smokes it on Node 20). Development and tests require Node ≥ `22.18` or ≥ `23.6`: `node --test` runs type-stripped TS directly and needs unflagged type stripping (CI runs the full suite on 22/24).
+Requires Node `>=22` (engines; CI runs the full suite on both 22 and 24). Running the type-stripped TS tests directly (`node --test`) additionally needs ≥ `22.18` or ≥ `23.6` (unflagged type stripping), which the latest 22.x CI resolves to satisfies out of the box.
 
 ```sh
 pnpm install

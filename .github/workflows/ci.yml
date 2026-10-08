@@ -32,9 +32,9 @@ jobs:
       contents: read
     strategy:
       matrix:
-        # 测试以 node --test 直跑 type-stripped TS，需要不带旗标的类型擦除
-        #（Node ≥ 22.18 / ≥ 23.6）：两条腿都跑。运行时产物的 Node 20 下限
-        # 由 runtime-floor 作业单独守护。
+        # 22 是 engines 下限、24 是当前主线：两条腿都跑。测试以 node --test
+        # 直跑 type-stripped TS，需要不带旗标的类型擦除（Node ≥ 22.18 /
+        # ≥ 23.6；setup-node 的 22 解析为 22.x 最新版，天然满足）。
         node-version: [22, 24]
     steps:
       - uses: actions/checkout@v4
@@ -69,42 +69,11 @@ jobs:
           npm install --no-audit --no-fund /tmp/dsh-vscode-bridge-*.tgz
           node -e "import('dsh-vscode-bridge').then((m) => { if (m.name !== 'dsh-vscode-bridge') throw new Error('host entry name mismatch'); if (typeof m.apply !== 'function') throw new Error('apply missing'); if (!Array.isArray(m.inject)) throw new Error('inject missing'); console.log('artifact OK:', m.name) })"
 
-  # 运行时下限守护：engines 声明 >=20（宿主进程内运行的是编译产物 lib/），
-  # 测试工具链的类型擦除下限不适用于它。在 Node 20 上构建并导入编译产物，
-  # 防止无意引入 22+/24-only API。
-  runtime-floor:
-    name: node 20 runtime floor
-    runs-on: ubuntu-latest
-    permissions:
-      contents: read
-    steps:
-      - uses: actions/checkout@v4
-
-      # pnpm 11（packageManager 钉的版本）自身要求 Node ≥ 22.13
-      # （依赖 node:sqlite），在 Node 20 下连 `pnpm store path` 都起不来——
-      # setup-node 的 cache 探测就会先崩。本腿只验证编译产物在 20 上可运行，
-      # 用 pnpm 10（支持 Node ≥ 18.12；lockfileVersion 9.0 与 pnpm 11 通用）。
-      - uses: pnpm/action-setup@v4
-        with:
-          version: 10
-
-      - uses: actions/setup-node@v4
-        with:
-          node-version: 20
-          cache: pnpm
-
-      - run: pnpm install --frozen-lockfile
-
-      - run: pnpm run build
-
-      - name: import the compiled entry
-        run: node -e "import('./lib/index.js').then((m) => { if (m.name !== 'dsh-vscode-bridge') throw new Error('host entry name mismatch') })"
-
   # 发布：仅标签推送；语义门禁全过后才 npm publish。
   publish:
     name: npm publish
     if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/')
-    needs: [verify, runtime-floor]
+    needs: [verify]
     runs-on: ubuntu-latest
     permissions:
       contents: read

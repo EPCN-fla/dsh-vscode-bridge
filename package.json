@@ -33,7 +33,7 @@
     "README.en.md"
   ],
   "engines": {
-    "node": ">=20"
+    "node": ">=22"
   },
   "scripts": {
     "prepack": "pnpm run build",

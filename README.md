@@ -74,7 +74,7 @@ dsh plugin --profile acp-vscode add dsh-vscode-bridge
 dsh plugin --profile acp-vscode add github:EPCN-fla/dsh-vscode-bridge
 ```
 
-通过 git 源安装时，pnpm 会执行包的 `prepare` 脚本自动完成构建（要求 Node `>=20`）。
+通过 git 源安装时，pnpm 会执行包的 `prepare` 脚本自动完成构建（要求 Node `>=22`）。
 
 ### 从 tarball 安装
 
@@ -227,7 +227,7 @@ dsh plugin --profile acp-vscode add /absolute/path/to/dsh-vscode-bridge
 
 ## 开发
 
-运行时产物兼容 Node `>=20`（engines；CI 有专门的 Node 20 构建+导入冒烟腿）。开发与测试需要 Node ≥ `22.18` 或 ≥ `23.6`：`node --test` 直跑 type-stripped TS，依赖不带旗标的类型擦除（CI 在 22/24 上跑全量）。
+要求 Node `>=22`（engines；CI 在 22/24 两条腿上跑全量验证）。`node --test` 直跑 type-stripped TS 的测试另需 ≥ `22.18` 或 ≥ `23.6`（不带旗标的类型擦除），CI 解析到的 22.x 最新版天然满足。
 
 ```sh
 pnpm install
