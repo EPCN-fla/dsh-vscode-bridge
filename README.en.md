@@ -47,13 +47,13 @@ flowchart LR
 
 ## Install
 
-Requires deepseek-harness `0.1.7-rc.1` or `>=0.2.0-rc.1 <0.2.0` — each admitted version passed a source-level audit (see `docs/0.3.0-upgrade.md`); unlisted versions are unverified. 0.1.5 DSH leaves the support corridor with 0.3.0; 0.1.5 hosts should stay on plugin 0.2.x.
+The correspondence matrix between plugin versions and DSH versions is as follows:
 
 | Plugin version | Supported DSH versions |
 | --- | --- |
-| 0.3.0 | `0.1.7-rc.1 \|\| >=0.2.0-rc.1 <0.2.0` |
-| 0.2.0 ~ 0.2.1 | `>=0.1.5-rc.2 <0.1.5 \|\| 0.1.7-rc.1` |
-| 0.1.2 ~ 0.1.3 | `>=0.1.5-rc.2 <0.1.5` |
+| 0.3.0 | 0.1.7-rc.1 \|\| >=0.2.0-rc.1 <0.2.0 |
+| 0.2.x | >=0.1.5-rc.2 <0.1.5 \|\| 0.1.7-rc.1 |
+| 0.1.x | >=0.1.5-rc.2 <0.1.5 |
 
 The plugin declares no DSH package in `peerDependencies`, so peer enforcement does not gate it — neither the 0.1.7 install/startup checks (DSH-0.1.7-J1-01) nor the composition-time compatibility preflight added in 0.2.0 (which disables rows whose declared `@deepseek-ai/dsh*` peers are unsatisfied; `dsh plugin allow-version` grants an exact-version exemption) looks at plugins without DSH peers.
 
