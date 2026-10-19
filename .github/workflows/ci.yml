@@ -36,6 +36,7 @@ jobs:
         # 直跑 type-stripped TS，需要不带旗标的类型擦除（Node ≥ 22.18 /
         # ≥ 23.6；setup-node 的 22 解析为 22.x 最新版，天然满足）。
         node-version: [22, 24]
+        dsh-version: ['0.1.7-rc.1', '0.2.0-rc.1', '0.2.0-rc.2', '0.2.1-rc.1', '0.2.1-rc.2']
     steps:
       - uses: actions/checkout@v4
 
@@ -49,6 +50,14 @@ jobs:
 
       # --frozen-lockfile 严格按 pnpm-lock.yaml 安装。
       - run: pnpm install --frozen-lockfile
+
+      - name: select exact DSH development cohort
+        if: matrix.dsh-version != '0.2.1-rc.2'
+        env:
+          DSH_TEST_VERSION: ${{ matrix.dsh-version }}
+        run: |
+          node --input-type=module -e 'import fs from "node:fs"; const p = JSON.parse(fs.readFileSync("package.json", "utf8")); for (const name of Object.keys(p.devDependencies)) if (name.startsWith("@deepseek-ai/dsh-")) p.devDependencies[name] = process.env.DSH_TEST_VERSION; p.devDependencies["@deepseek-ai/cordis"] = process.env.DSH_TEST_VERSION.startsWith("0.2.1") ? "~4.0.5" : "~4.0.4"; fs.writeFileSync("package.json", JSON.stringify(p, null, 2) + "\n");'
+          pnpm install --no-frozen-lockfile --ignore-scripts
 
       - name: typecheck
         run: pnpm run typecheck
