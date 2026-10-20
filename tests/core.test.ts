@@ -382,6 +382,49 @@ async function withCore(
 
 // —— tests ——
 
+test('stop drains pending startup and removes the exit listener only after cleanup', async t => {
+  let release!: (version: string) => void
+  let entered!: () => void
+  const detected = new Promise<void>(resolve => { entered = resolve })
+  const version = new Promise<string>(resolve => { release = resolve })
+  const { deps, discoveryDir } = makeDeps({ detectHostVersion: () => { entered(); return version } })
+  const before = process.listenerCount('exit')
+  const core = new BridgeCore(deps)
+  t.after(async () => { release('0.2.1-rc.2'); await core.stop(); await rm(discoveryDir, { recursive: true, force: true }) })
+  const started = core.start()
+  await detected
+  const stopped = core.stop()
+  assert.equal(process.listenerCount('exit'), before + 1)
+  release('0.2.1-rc.2')
+  await Promise.all([started, stopped, core.stop()])
+  assert.equal(core.port, undefined)
+  assert.equal(existsSync(join(discoveryDir, `${process.pid}.json`)), false)
+  assert.equal(process.listenerCount('exit'), before)
+})
+
+test('config RPC authenticates before invoking the optional importer', async () => {
+  const calls: unknown[] = []
+  await withCore((deps) => {
+    Object.assign(deps, { configSync: {
+      available: () => true,
+      run: async (method: string, params: unknown) => { calls.push([method, params]); return { changed: false } },
+    } })
+  }, async core => {
+    const client = new TestClient()
+    await client.connect(core.port as number)
+    try {
+      const denied = await client.request('config.import', { revision: 'fake' }, 'wrong')
+      assert.equal((denied.error as { code: number }).code, -32001)
+      assert.equal(calls.length, 0)
+      const hello = await client.request('bridge.handshake')
+      assert.equal((hello.result as { capabilities: { configSync: boolean } }).capabilities.configSync, true)
+      assert.deepEqual((await client.request('config.preview', { models: true })).result, { changed: false })
+      assert.deepEqual((await client.request('config.import', { revision: 'reviewed' })).result, { changed: false })
+      assert.deepEqual(calls, [['preview', { models: true }], ['import', { revision: 'reviewed' }]])
+    } finally { client.close() }
+  })
+})
+
 test('handshake requires the token and reports capabilities', async () => {
   await withCore(() => {}, async (core) => {
     assert.notEqual(core.port, undefined)
@@ -404,6 +447,7 @@ test('handshake requires the token and reports capabilities', async () => {
       skills: true,
       sessionExport: true,
       eventPush: true,
+      configSync: false,
     })
     client.close()
   })
@@ -751,6 +795,7 @@ test('degraded services report capabilities honestly', async () => {
       skills: false,
       sessionExport: false,
       eventPush: true,
+      configSync: false,
     })
     const presetList = await client.request('preset.list')
     assert.equal((presetList.error as { code: number; data: { code: string } }).data.code, 'service-unavailable')

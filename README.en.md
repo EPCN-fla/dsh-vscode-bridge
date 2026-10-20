@@ -47,17 +47,18 @@ flowchart LR
 
 ## Install
 
-Requires deepseek-harness `0.1.7-rc.1` or `>=0.2.0-rc.1 <0.2.0` — each admitted version passed a source-level audit (see `docs/0.3.0-upgrade.md`); unlisted versions are unverified. 0.1.5 DSH leaves the support corridor with 0.3.0; 0.1.5 hosts should stay on plugin 0.2.x.
+The correspondence matrix between plugin versions and DSH versions is as follows:
 
 | Plugin version | Supported DSH versions |
 | --- | --- |
-| 0.3.0 | `0.1.7-rc.1 \|\| >=0.2.0-rc.1 <0.2.0` |
-| 0.2.0 ~ 0.2.1 | `>=0.1.5-rc.2 <0.1.5 \|\| 0.1.7-rc.1` |
-| 0.1.2 ~ 0.1.3 | `>=0.1.5-rc.2 <0.1.5` |
+| 0.4.0 | 0.1.7-rc.1 \|\| >=0.2.0-rc.1 <0.2.0 \|\| >=0.2.1-rc.1 <0.2.1 |
+| 0.3.0 | 0.1.7-rc.1 \|\| >=0.2.0-rc.1 <0.2.0 |
+| 0.2.x | >=0.1.5-rc.2 <0.1.5 \|\| 0.1.7-rc.1 |
+| 0.1.x | >=0.1.5-rc.2 <0.1.5 |
 
 The plugin declares no DSH package in `peerDependencies`, so peer enforcement does not gate it — neither the 0.1.7 install/startup checks (DSH-0.1.7-J1-01) nor the composition-time compatibility preflight added in 0.2.0 (which disables rows whose declared `@deepseek-ai/dsh*` peers are unsatisfied; `dsh plugin allow-version` grants an exact-version exemption) looks at plugins without DSH peers.
 
-The plugin must be loaded into a custom profile carrying both the `dsh-base` and `dsh-acp-app` bundles. DSH ships no ready-made acp profile: a custom profile initialized by `dsh plugin` starts with `dsh-base` only, so you add the `dsh-acp-app` bundle by hand, plus the service rows the ACP composition does not ship (`workspace`, the preset-registry row, and the subagent model-route host row the `standard` preset mounts). The preset-registry row is stable across the corridor: presets are declarative since 0.1.7 (DSH-0.1.7-J1-03) — the registry row is `agent-preset-registry` (`@deepseek-ai/dsh-agent-preset-registry`, `config: { default: standard }`) and each preset needs its own `@deepseek-ai/dsh-agent-preset` declaration row (see the web-app bundle's `presets/*.patch.yml`, byte-identical between 0.1.7 and 0.2.0). Without the service the bridge still loads; its `presets` capability reports unavailable.
+The plugin must be loaded into a custom profile carrying both the `dsh-base` and `dsh-acp-app` bundles. Older DSH versions ship no ready-made acp profile (0.2.1 provides an `acp` template); an arbitrary custom profile initialized by `dsh plugin` still starts with `dsh-base` only, so you add the `dsh-acp-app` bundle by hand, plus the service rows the ACP composition does not ship (`workspace`, the preset-registry row, and the subagent model-route host row the `standard` preset mounts). The preset-registry row is stable across the corridor: presets are declarative since 0.1.7 (DSH-0.1.7-J1-03) — the registry row is `agent-preset-registry` (`@deepseek-ai/dsh-agent-preset-registry`, `config: { default: standard }`) and each preset needs its own `@deepseek-ai/dsh-agent-preset` declaration row (see the web-app bundle's `presets/*.patch.yml`, byte-identical between 0.1.7 and 0.2.0). Without the service the bridge still loads; its `presets` capability reports unavailable.
 
 All three options use the DSH CLI to add the plugin to a given profile (`acp-vscode` in the examples; substitute as needed).
 
@@ -182,6 +183,8 @@ One JSON object per line, both directions, standard JSON-RPC 2.0 envelope.
 | Method | Params | Result |
 |---|---|---|
 | `bridge.handshake` | — | `{ protocolVersion, plugin, version, dshVersion?, pid, startedAt, capabilities }` — `dshVersion` is the host DSH version (e.g. `0.1.7-rc.1`), omitted when undetectable |
+| `config.preview` | `{ models?, presets?, overwrite? }` | Web import summary and `revision`, without writes |
+| `config.import` | `{ models?, presets?, overwrite?, revision }` | Import summary and `backupPath?`; restart the target to activate |
 | `session.list` | `{ includeStored? }` | `{ sessions: LiveSessionInfo[], storedIncluded, stored? }` |
 | `session.get` | `{ sessionId }` | live row, or a stored row with the folded title |
 | `session.setTitle` | `{ sessionId, title }` | `{ sessionId, title, updatedAt }` — live sessions only |
@@ -203,6 +206,29 @@ One JSON object per line, both directions, standard JSON-RPC 2.0 envelope.
 Subscription `types` entries match exactly, or by prefix when they end in `/` (`plan/` matches `plan/update`); `*` matches everything. The default push set is `session/title`, `permission/preset`, `sandbox/mode`, `approval/policy`, `agent-preset/selected`, `command/`, `plan/`, `todo/`.
 
 Error codes: standard JSON-RPC (`-32700` parse, `-32600` invalid request, `-32601` unknown method, `-32602` invalid params, `-32603` internal) plus `-32000` server error (`data.code` such as `command/timeout`, `command/aborted`), `-32001` unauthorized (bad/missing token), `-32002` service unavailable in this profile, `-32004` session not found / not live, `-32009` conflict (carries upstream codes such as `agent-preset/locked` in `data.code`). An unresolvable `command.run` name additionally answers `-32602` with `data.code: 'command/unknown'`.
+
+## Import Web models and presets
+
+The current source exposes `config.preview` / `config.import`, importing from `web` under the same `$DSH_HOME` into the active bridge profile. This is an explicit, one-way import, not a background or bidirectional sync. A client holding the bridge token must request it. The VS Code extension needs to integrate these RPCs to offer an import button; extension UI is outside this repository.
+
+1. Call `config.preview` with `{ models: true, presets: true, overwrite: false }` (the defaults). It returns `{ source, target, revision, providers, presets, skipped, supportRows, changed, restartRequired }`: identifiers only, never model configurations, credentials or expressions.
+2. After user confirmation, call `config.import` with the **same options** and the returned `revision`. Changed files or options return `-32009 config/stale-preview`; preview again.
+3. A successful write returns the summary and optional `backupPath`. Restart the target ACP/bridge process. Existing sessions are not switched automatically, and hot reload is not guaranteed. Importing unchanged configuration again does not append duplicates.
+
+```jsonc
+{ "id": 1, "method": "config.preview", "token": "<bridge-token>",
+  "params": { "models": true, "presets": true, "overwrite": false } }
+{ "id": 2, "method": "config.import", "token": "<bridge-token>",
+  "params": { "models": true, "presets": true, "overwrite": false, "revision": "<preview.revision>" } }
+```
+
+- **Models:** copies `config.providers` from row `llm-pi-ai` naming `@deepseek-ai/dsh-llm-pi-ai`. Merges by provider id, keeping existing target providers by default. `overwrite: true` replaces the entire matching provider definition, including its models list. Target-only providers, other adapter fields and the target adapter's enabled state are retained.
+- **Preset modes:** copies full `@deepseek-ai/dsh-agent-preset` declarations, both shipped and custom, keyed by `config.id`. Existing presets win by default; replacement retains the target row id. Missing registry and subagent model-routing settings, plus the Host runner/inspect providers needed by cordis mode, appear in `supportRows` and are imported together. No Web server or browser UI is added. An existing registry's default mode is retained.
+- **Sources:** reads installed bundle patches and the Web user patch through the running host's native parser/composer, preserving `!!js` without evaluating it. Shared home patches retain priority; an import they would override is rejected. CLI `--patch` overlays, environment files and OAuth/credential stores are not copied. Environment and credential references must work in the target environment.
+- **Files and credentials:** only the target `cordis.patch.yml` is changed. An exact backup precedes atomic replacement; backup and output permissions are 0600. YAML comments/formatting may change; unselected configuration values remain. Inline API keys are copied to local files with the provider, never returned in RPC summaries or parser error details. Web source files are read-only.
+- **Limits and recovery:** model/preset declarations must be top-level, and provider dictionaries must be literal mappings (expressions inside routes are preserved). Duplicate ids, linked patch files and filesystem plugin paths in presets are rejected. Required packages must already be installed; the importer does not install third-party packages or infer arbitrary service dependencies. Wire any additional Host services required by custom presets and check `preset.list` for `broken` after restarting. Stop the target process before restoring `backupPath`. Avoid concurrent writes by other configuration editors; bridge imports use an exclusive lock. If a crashed process leaves `cordis.patch.yml.bridge-lock`, verify no import is running before removing it manually.
+
+`bridge.handshake.capabilities.configSync` indicates that launcher profile facts are available; older bridges may omit it. Missing host tooling or file-access failures return `-32002 config/unavailable` without YAML source excerpts. Other conflicts include `config/import-busy`, `config/row-collision`, `config/shared-override` and `config/missing-package`.
 
 ## Configuration
 

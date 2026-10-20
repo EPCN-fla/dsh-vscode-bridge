@@ -99,6 +99,8 @@ export interface BridgeCapabilities {
   readonly sessionExport: boolean
   /** Server-push `bridge.event` notifications for subscribed session events. */
   readonly eventPush: boolean
+  /** Web profile model/preset import; optional for older bridge clients. */
+  readonly configSync?: boolean
 }
 
 /** Result of `bridge.handshake`. */

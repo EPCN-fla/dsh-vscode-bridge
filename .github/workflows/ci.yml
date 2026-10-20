@@ -36,6 +36,7 @@ jobs:
         # 直跑 type-stripped TS，需要不带旗标的类型擦除（Node ≥ 22.18 /
         # ≥ 23.6；setup-node 的 22 解析为 22.x 最新版，天然满足）。
         node-version: [22, 24]
+        dsh-version: ['0.1.7-rc.1', '0.2.0-rc.1', '0.2.0-rc.2', '0.2.1-rc.1', '0.2.1-rc.2']
     steps:
       - uses: actions/checkout@v4
 
@@ -49,6 +50,14 @@ jobs:
 
       # --frozen-lockfile 严格按 pnpm-lock.yaml 安装。
       - run: pnpm install --frozen-lockfile
+
+      - name: select exact DSH development cohort
+        if: matrix.dsh-version != '0.2.1-rc.2'
+        env:
+          DSH_TEST_VERSION: ${{ matrix.dsh-version }}
+        run: |
+          node --input-type=module -e 'import fs from "node:fs"; const p = JSON.parse(fs.readFileSync("package.json", "utf8")); for (const name of Object.keys(p.devDependencies)) if (name.startsWith("@deepseek-ai/dsh-")) p.devDependencies[name] = process.env.DSH_TEST_VERSION; p.devDependencies["@deepseek-ai/cordis"] = process.env.DSH_TEST_VERSION.startsWith("0.2.1") ? "~4.0.5" : "~4.0.4"; fs.writeFileSync("package.json", JSON.stringify(p, null, 2) + "\n");'
+          pnpm install --no-frozen-lockfile --ignore-scripts
 
       - name: typecheck
         run: pnpm run typecheck
@@ -68,6 +77,18 @@ jobs:
           npm init -y >/dev/null
           npm install --no-audit --no-fund /tmp/dsh-vscode-bridge-*.tgz
           node -e "import('dsh-vscode-bridge').then((m) => { if (m.name !== 'dsh-vscode-bridge') throw new Error('host entry name mismatch'); if (typeof m.apply !== 'function') throw new Error('apply missing'); if (!Array.isArray(m.inject)) throw new Error('inject missing'); console.log('artifact OK:', m.name) })"
+
+      # 精确宿主验证：安装临时 CLI，不使用机器的全局 dsh 或用户配置。
+      - name: exact host profile import smoke
+        if: matrix.node-version == 22
+        env:
+          DSH_TEST_VERSION: ${{ matrix.dsh-version }}
+        run: |
+          mkdir -p .sandbox/runtime
+          node --input-type=module -e 'import fs from "node:fs"; fs.writeFileSync(".sandbox/runtime/package.json", JSON.stringify({ private: true, dependencies: { "@deepseek-ai/dsh": process.env.DSH_TEST_VERSION } }));'
+          pnpm --dir .sandbox/runtime install --ignore-scripts --store-dir ../pnpm-store --registry=https://registry.npmjs.org
+          PKG_VERSION=$(node -p "require('./package.json').version")
+          node scripts/runtime-smoke.mjs .sandbox/runtime "/tmp/dsh-vscode-bridge-${PKG_VERSION}.tgz"
 
   # 发布：仅标签推送；语义门禁全过后才 npm publish。
   publish:

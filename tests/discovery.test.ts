@@ -68,6 +68,19 @@ test('re-publish replaces the file in place', async () => {
   await rm(root, { recursive: true, force: true })
 })
 
+test('concurrent publications serialize and clear prevents late republishing', async t => {
+  const root = await mkdtemp(join(tmpdir(), 'dsh-bridge-discovery-'))
+  t.after(() => rm(root, { recursive: true, force: true }))
+  const discovery = new DiscoveryFile({ directory: root, logger: silent })
+  await Promise.all(Array.from({ length: 12 }, (_, index) => discovery.publish(payload(7310 + index))))
+  assert.equal(JSON.parse(await readFile(discovery.path, 'utf8')).port, 7321)
+  const publishing = discovery.publish(payload(7340))
+  await discovery.clear()
+  await publishing
+  await discovery.publish(payload(7341))
+  assert.equal(existsSync(discovery.path), false)
+})
+
 test('clearSync removes the published file (process exit path)', async () => {
   const root = await mkdtemp(join(tmpdir(), 'dsh-bridge-discovery-'))
   const discovery = new DiscoveryFile({ directory: root, logger: silent })
