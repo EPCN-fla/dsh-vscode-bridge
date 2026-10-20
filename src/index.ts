@@ -42,6 +42,7 @@ import type {} from '@deepseek-ai/dsh-permission-presets'
 import type {} from '@deepseek-ai/dsh-commands'
 import type {} from '@deepseek-ai/dsh-skill'
 import { BridgeCore, type ResolvedBridgeConfig } from './core.ts'
+import { createConfigSync } from './config-sync.ts'
 
 export const name = 'dsh-vscode-bridge'
 
@@ -128,6 +129,7 @@ export function apply(ctx: Context, config: BridgePluginConfig): void {
     // Provided by the dsh launcher before the tree mounts on every supported
     // host (≥ 0.1.7). Feeds host-version detection for `dshVersion` on the wire.
     getProfileContext: () => ctx.get('profileContext'),
+    configSync: createConfigSync(() => ctx.get('profileContext')),
     // Probed without their type-merge packages: the bridge only forwards the
     // values into the lazily imported archive module, which type-checks them.
     getSessionQuery: () => ctx.get('sessionQuery'),

@@ -183,6 +183,8 @@ One JSON object per line, both directions, standard JSON-RPC 2.0 envelope.
 | Method | Params | Result |
 |---|---|---|
 | `bridge.handshake` | — | `{ protocolVersion, plugin, version, dshVersion?, pid, startedAt, capabilities }` — `dshVersion` is the host DSH version (e.g. `0.1.7-rc.1`), omitted when undetectable |
+| `config.preview` | `{ models?, presets?, overwrite? }` | Web import summary and `revision`, without writes |
+| `config.import` | `{ models?, presets?, overwrite?, revision }` | Import summary and `backupPath?`; restart the target to activate |
 | `session.list` | `{ includeStored? }` | `{ sessions: LiveSessionInfo[], storedIncluded, stored? }` |
 | `session.get` | `{ sessionId }` | live row, or a stored row with the folded title |
 | `session.setTitle` | `{ sessionId, title }` | `{ sessionId, title, updatedAt }` — live sessions only |
@@ -204,6 +206,29 @@ One JSON object per line, both directions, standard JSON-RPC 2.0 envelope.
 Subscription `types` entries match exactly, or by prefix when they end in `/` (`plan/` matches `plan/update`); `*` matches everything. The default push set is `session/title`, `permission/preset`, `sandbox/mode`, `approval/policy`, `agent-preset/selected`, `command/`, `plan/`, `todo/`.
 
 Error codes: standard JSON-RPC (`-32700` parse, `-32600` invalid request, `-32601` unknown method, `-32602` invalid params, `-32603` internal) plus `-32000` server error (`data.code` such as `command/timeout`, `command/aborted`), `-32001` unauthorized (bad/missing token), `-32002` service unavailable in this profile, `-32004` session not found / not live, `-32009` conflict (carries upstream codes such as `agent-preset/locked` in `data.code`). An unresolvable `command.run` name additionally answers `-32602` with `data.code: 'command/unknown'`.
+
+## Import Web models and presets
+
+The current source exposes `config.preview` / `config.import`, importing from `web` under the same `$DSH_HOME` into the active bridge profile. This is an explicit, one-way import, not a background or bidirectional sync. A client holding the bridge token must request it. The VS Code extension needs to integrate these RPCs to offer an import button; extension UI is outside this repository.
+
+1. Call `config.preview` with `{ models: true, presets: true, overwrite: false }` (the defaults). It returns `{ source, target, revision, providers, presets, skipped, supportRows, changed, restartRequired }`: identifiers only, never model configurations, credentials or expressions.
+2. After user confirmation, call `config.import` with the **same options** and the returned `revision`. Changed files or options return `-32009 config/stale-preview`; preview again.
+3. A successful write returns the summary and optional `backupPath`. Restart the target ACP/bridge process. Existing sessions are not switched automatically, and hot reload is not guaranteed. Importing unchanged configuration again does not append duplicates.
+
+```jsonc
+{ "id": 1, "method": "config.preview", "token": "<bridge-token>",
+  "params": { "models": true, "presets": true, "overwrite": false } }
+{ "id": 2, "method": "config.import", "token": "<bridge-token>",
+  "params": { "models": true, "presets": true, "overwrite": false, "revision": "<preview.revision>" } }
+```
+
+- **Models:** copies `config.providers` from row `llm-pi-ai` naming `@deepseek-ai/dsh-llm-pi-ai`. Merges by provider id, keeping existing target providers by default. `overwrite: true` replaces the entire matching provider definition, including its models list. Target-only providers, other adapter fields and the target adapter's enabled state are retained.
+- **Preset modes:** copies full `@deepseek-ai/dsh-agent-preset` declarations, both shipped and custom, keyed by `config.id`. Existing presets win by default; replacement retains the target row id. Missing registry and subagent model-routing settings, plus the Host runner/inspect providers needed by cordis mode, appear in `supportRows` and are imported together. No Web server or browser UI is added. An existing registry's default mode is retained.
+- **Sources:** reads installed bundle patches and the Web user patch through the running host's native parser/composer, preserving `!!js` without evaluating it. Shared home patches retain priority; an import they would override is rejected. CLI `--patch` overlays, environment files and OAuth/credential stores are not copied. Environment and credential references must work in the target environment.
+- **Files and credentials:** only the target `cordis.patch.yml` is changed. An exact backup precedes atomic replacement; backup and output permissions are 0600. YAML comments/formatting may change; unselected configuration values remain. Inline API keys are copied to local files with the provider, never returned in RPC summaries or parser error details. Web source files are read-only.
+- **Limits and recovery:** model/preset declarations must be top-level, and provider dictionaries must be literal mappings (expressions inside routes are preserved). Duplicate ids, linked patch files and filesystem plugin paths in presets are rejected. Required packages must already be installed; the importer does not install third-party packages or infer arbitrary service dependencies. Wire any additional Host services required by custom presets and check `preset.list` for `broken` after restarting. Stop the target process before restoring `backupPath`. Avoid concurrent writes by other configuration editors; bridge imports use an exclusive lock. If a crashed process leaves `cordis.patch.yml.bridge-lock`, verify no import is running before removing it manually.
+
+`bridge.handshake.capabilities.configSync` indicates that launcher profile facts are available; older bridges may omit it. Missing host tooling or file-access failures return `-32002 config/unavailable` without YAML source excerpts. Other conflicts include `config/import-busy`, `config/row-collision`, `config/shared-override` and `config/missing-package`.
 
 ## Configuration
 

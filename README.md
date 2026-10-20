@@ -179,6 +179,8 @@ dsh plugin --profile acp-vscode add /absolute/path/to/dsh-vscode-bridge
 | 方法 | 参数 | 返回 |
 |---|---|---|
 | `bridge.handshake` | — | `{ protocolVersion, plugin, version, dshVersion?, pid, startedAt, capabilities }`——`dshVersion` 是宿主 DSH 版本（如 `0.1.7-rc.1`），无法探测时缺省 |
+| `config.preview` | `{ models?, presets?, overwrite? }` | Web 导入摘要与 `revision`（不写文件） |
+| `config.import` | `{ models?, presets?, overwrite?, revision }` | 导入摘要与 `backupPath?`；重启目标后生效 |
 | `session.list` | `{ includeStored? }` | `{ sessions: LiveSessionInfo[], storedIncluded, stored? }` |
 | `session.get` | `{ sessionId }` | 活会话行，或带折叠标题的存储态行 |
 | `session.setTitle` | `{ sessionId, title }` | `{ sessionId, title, updatedAt }`——仅限活会话 |
@@ -200,6 +202,29 @@ dsh plugin --profile acp-vscode add /absolute/path/to/dsh-vscode-bridge
 订阅的 `types` 条目默认精确匹配；以 `/` 结尾时按前缀匹配（`plan/` 匹配 `plan/update`）；`*` 匹配全部。默认推送集合：`session/title`、`permission/preset`、`sandbox/mode`、`approval/policy`、`agent-preset/selected`、`command/`、`plan/`、`todo/`。
 
 错误码：标准 JSON-RPC（`-32700` 解析失败、`-32600` 非法请求、`-32601` 未知方法、`-32602` 参数错误、`-32603` 内部错误），另有 `-32000` 服务器错误（`data.code` 如 `command/timeout`、`command/aborted`）、`-32001` 未授权（token 缺失或错误）、`-32002` 该 profile 中服务不可用、`-32004` 会话不存在/非活会话、`-32009` 冲突（`data.code` 携带上游错误码，如 `agent-preset/locked`）。`command.run` 对未知名称另以 `-32602` + `data.code: 'command/unknown'` 应答。
+
+## 从 Web 导入模型与预设
+
+当前源码提供 `config.preview` / `config.import`，方向固定为同一 `$DSH_HOME` 下的 `web` profile → 当前 bridge profile。它是按需单向导入，不是后台双向同步，也不会自动修改正在运行的真实配置；由持有 bridge token 的客户端显式调用。扩展需要接入这两个 RPC 才会出现导入 UI，本仓库不包含扩展端按钮。
+
+1. 调用 `config.preview`，参数 `{ models: true, presets: true, overwrite: false }`（这也是默认值）。响应包含 `{ source, target, revision, providers, presets, skipped, supportRows, changed, restartRequired }`，只列标识符，不返回模型配置、密钥或表达式。
+2. 用户确认后，用**相同选项**调用 `config.import` 并携带预览返回的 `revision`。文件或选项发生变化时返回 `-32009 config/stale-preview`，需要重新预览。
+3. 写入成功返回相同摘要与可选 `backupPath`。请重启目标 ACP/bridge 进程；现有会话不会被自动切换模型或预设，也不保证热加载。再次导入未变化的配置不会重复追加。
+
+```jsonc
+{ "id": 1, "method": "config.preview", "token": "<bridge-token>",
+  "params": { "models": true, "presets": true, "overwrite": false } }
+{ "id": 2, "method": "config.import", "token": "<bridge-token>",
+  "params": { "models": true, "presets": true, "overwrite": false, "revision": "<preview.revision>" } }
+```
+
+- **模型**：导入 `id: llm-pi-ai`、模块为 `@deepseek-ai/dsh-llm-pi-ai` 的 `config.providers`。以 provider id 为单位合并；同名 provider 默认保留目标，`overwrite: true` 替换该 provider 的完整定义（包括 models 列表），保留目标独有 provider 和适配器其他字段。目标适配器原有启用状态不变。
+- **预设模式**：导入 `@deepseek-ai/dsh-agent-preset` 完整声明，包括 Web 自带模式和用户自定义模式，以 `config.id` 判重；默认保留同名目标预设，覆盖时保持目标行 id。缺失的预设注册表、子代理模型路由设置，以及 cordis 模式需要的 Host runner/inspect providers 会列在 `supportRows` 并一起导入；不会装入 Web server 或浏览器 UI。已有注册表的默认模式保持不变。
+- **配置来源**：读取已安装 bundle 的 patch 与 Web 用户 patch，使用当前宿主原生解析器和组合规则，保留 `!!js` 而不执行它。共享 home patch 仍优先生效；若其覆盖导入结果则拒绝导入。命令行 `--patch`、环境文件、OAuth/凭据仓库不复制；环境变量和 credential 引用须在目标环境可用。
+- **文件与凭据**：仅改写目标 `cordis.patch.yml`，先生成逐字备份，再以临时文件原子替换；备份和输出均为 0600。已有 YAML 注释/排版可能重排，未选择的配置值保留。内联 API key 会随 provider 写入本机文件，但不进入 RPC 摘要或错误详情。来源 Web 文件不写入。
+- **限制与恢复**：模型/预设声明须在顶层，provider 字典须为字面映射（字典内部允许表达式）；拒绝重复 id、链接 patch 和含文件路径插件的预设。目标必须已安装所需包；不会自动安装第三方包或任意服务依赖。自定义预设依赖的额外宿主服务需自行接线，重启后用 `preset.list` 检查 `broken`。停止目标进程后可从 `backupPath` 恢复原 patch。导入期间不要通过其他配置编辑器同时写目标；bridge 实例之间有排他锁，若进程崩溃残留 `cordis.patch.yml.bridge-lock`，确认没有导入在运行后再手动移除。
+
+`bridge.handshake.capabilities.configSync` 表示已获得导入所需的 launcher profile facts；旧桥接可能不返回此字段。无法解析宿主工具或读写文件时方法返回 `-32002 config/unavailable`，不泄露 YAML 错误上下文。其他冲突包括 `config/import-busy`、`config/row-collision`、`config/shared-override`、`config/missing-package`。
 
 ## 配置
 

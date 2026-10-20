@@ -108,6 +108,11 @@ export interface BridgeCoreDeps {
   readonly logger: BridgeTransportLogger
   readonly config: ResolvedBridgeConfig
   readonly version: string
+  /** Optional profile import service, resolved from launcher facts. */
+  readonly configSync?: {
+    available(): boolean
+    run(method: 'preview' | 'import', params: unknown): Promise<unknown>
+  }
   readonly sessions: SessionStore
   readonly sessionPersistence?: SessionPersistence
   readonly sessionTitle?: SessionTitleService
@@ -208,6 +213,7 @@ export class BridgeCore {
       // this to false on later handshakes.
       sessionExport: this.deps.getSessionQuery() !== undefined && this.sessionLogExportResolved !== false,
       eventPush: true,
+      configSync: this.deps.configSync?.available() ?? false,
     }
   }
 
@@ -407,6 +413,10 @@ export class BridgeCore {
     switch (method) {
       case 'bridge.handshake':
         return await this.handshake()
+      case 'config.preview':
+        return await this.requireService(this.deps.configSync, 'configSync').run('preview', params)
+      case 'config.import':
+        return await this.requireService(this.deps.configSync, 'configSync').run('import', params)
       case 'session.list':
         return this.listSessions(params)
       case 'session.get':
