@@ -51,8 +51,8 @@ The correspondence matrix between plugin versions and DSH versions is as follows
 
 | Plugin version | Supported DSH versions |
 | --- | --- |
-| Current source (version remains 0.3.0; unreleased) | 0.1.7-rc.1 \|\| >=0.2.0-rc.1 <0.2.0 \|\| 0.2.1-rc.1 \|\| 0.2.1-rc.2 |
-| Published 0.3.0 | 0.1.7-rc.1 \|\| >=0.2.0-rc.1 <0.2.0 |
+| 0.4.0 | 0.1.7-rc.1 \|\| >=0.2.0-rc.1 <0.2.0 \|\| >=0.2.1-rc.1 <0.2.1 |
+| 0.3.0 | 0.1.7-rc.1 \|\| >=0.2.0-rc.1 <0.2.0 |
 | 0.2.x | >=0.1.5-rc.2 <0.1.5 \|\| 0.1.7-rc.1 |
 | 0.1.x | >=0.1.5-rc.2 <0.1.5 |
 
