@@ -1,0 +1,13 @@
+{
+  "source": "web",
+  "target": "bridge-test",
+  "providerImported": true,
+  "presetImported": true,
+  "changed": true,
+  "restartRequired": true,
+  "backupCreated": true,
+  "idempotentAfterRestart": true,
+  "presetActivated": true,
+  "acpModelVisible": true,
+  "selectedPreset": "bridge-test"
+}

@@ -78,6 +78,18 @@ jobs:
           npm install --no-audit --no-fund /tmp/dsh-vscode-bridge-*.tgz
           node -e "import('dsh-vscode-bridge').then((m) => { if (m.name !== 'dsh-vscode-bridge') throw new Error('host entry name mismatch'); if (typeof m.apply !== 'function') throw new Error('apply missing'); if (!Array.isArray(m.inject)) throw new Error('inject missing'); console.log('artifact OK:', m.name) })"
 
+      # 精确宿主验证：安装临时 CLI，不使用机器的全局 dsh 或用户配置。
+      - name: exact host profile import smoke
+        if: matrix.node-version == 22
+        env:
+          DSH_TEST_VERSION: ${{ matrix.dsh-version }}
+        run: |
+          mkdir -p .sandbox/runtime
+          node --input-type=module -e 'import fs from "node:fs"; fs.writeFileSync(".sandbox/runtime/package.json", JSON.stringify({ private: true, dependencies: { "@deepseek-ai/dsh": process.env.DSH_TEST_VERSION } }));'
+          pnpm --dir .sandbox/runtime install --ignore-scripts --store-dir ../pnpm-store --registry=https://registry.npmjs.org
+          PKG_VERSION=$(node -p "require('./package.json').version")
+          node scripts/runtime-smoke.mjs .sandbox/runtime "/tmp/dsh-vscode-bridge-${PKG_VERSION}.tgz"
+
   # 发布：仅标签推送；语义门禁全过后才 npm publish。
   publish:
     name: npm publish
