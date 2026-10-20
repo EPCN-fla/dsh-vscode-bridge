@@ -30,6 +30,8 @@ export class DiscoveryFile {
     readonly logger: BridgeTransportLogger
   }
   private published = false
+  private closing = false
+  private writes: Promise<void> = Promise.resolve()
 
   constructor(deps: {
     readonly directory: string
@@ -52,19 +54,34 @@ export class DiscoveryFile {
    * Write or atomically replace this instance's discovery file. The
    * directory is created on demand mode 0700 — it holds bearer tokens.
    */
-  async publish(payload: DiscoveryFilePayload): Promise<void> {
-    await mkdir(this.deps.directory, { recursive: true, mode: 0o700 })
+  publish(payload: DiscoveryFilePayload): Promise<void> {
+    if (this.closing) return Promise.resolve()
     const body = `${JSON.stringify(payload, null, 2)}\n`
-    const target = this.path
-    const temporary = `${target}.tmp-${process.pid}`
-    await writeFile(temporary, body, { encoding: 'utf8', mode: 0o600 })
-    await chmod(temporary, 0o600).catch(() => {})
-    await rename(temporary, target)
-    this.published = true
+    const task = this.writes.then(async () => {
+      if (this.closing) return
+      await mkdir(this.deps.directory, { recursive: true, mode: 0o700 })
+      const target = this.path
+      const temporary = `${target}.tmp-${process.pid}`
+      try {
+        await writeFile(temporary, body, { encoding: 'utf8', mode: 0o600 })
+        await chmod(temporary, 0o600)
+        if (this.closing) return
+        await rename(temporary, target)
+        this.published = true
+      } finally {
+        await unlink(temporary).catch((error: NodeJS.ErrnoException) => {
+          if (error.code !== 'ENOENT') throw error
+        })
+      }
+    })
+    this.writes = task.catch(() => {})
+    return task
   }
 
   /** Remove this instance's file. Called on plugin disposal. */
   async clear(): Promise<void> {
+    this.closing = true
+    await this.writes
     try {
       await unlink(this.path)
     } catch (error: unknown) {
@@ -77,9 +94,12 @@ export class DiscoveryFile {
 
   /** Synchronous best-effort cleanup for the process `exit` hook. */
   clearSync(): void {
-    try {
-      unlinkSync(this.path)
-    } catch { /* already gone — nothing to retract */ }
+    this.closing = true
+    for (const path of [this.path, `${this.path}.tmp-${process.pid}`]) {
+      try {
+        unlinkSync(path)
+      } catch { /* already gone — nothing to retract */ }
+    }
     this.published = false
   }
 

@@ -171,6 +171,8 @@ export class BridgeCore {
   private readonly inflight = new Map<number, Set<AbortController>>()
   private readonly startedAt = new Date().toISOString()
   private stopping = false
+  private startup: Promise<void> | undefined
+  private shutdown: Promise<void> | undefined
   private readonly deps: BridgeCoreDeps
   /** Cached first-call probe of the archive module; tri-state via settlement. */
   private sessionLogExportProbe: Promise<SessionLogExportModule | undefined> | undefined
@@ -236,7 +238,14 @@ export class BridgeCore {
    * reap stale discovery entries, and publish ours. A port-range exhaustion
    * degrades the plugin to attach-only instead of failing the profile boot.
    */
-  async start(): Promise<void> {
+  start(): Promise<void> {
+    if (this.stopping) return Promise.resolve()
+    this.startup ??= this.startOnce()
+    return this.startup
+  }
+
+  private async startOnce(): Promise<void> {
+    process.once('exit', this.clearDiscoverySync)
     if (this.deps.config.attachSessions) {
       for (const session of this.deps.sessions.list()) {
         await this.attachSession(session)
@@ -264,19 +273,24 @@ export class BridgeCore {
     }
     await this.discovery.sweepStale()
     await this.publishDiscovery()
-    process.once('exit', this.clearDiscoverySync)
   }
 
-  /** Release the listener, subscriptions, and the discovery file. */
-  async stop(): Promise<void> {
-    if (this.stopping) return
+  /** Drain startup and publication before releasing owned resources. */
+  stop(): Promise<void> {
     this.stopping = true
-    process.removeListener('exit', this.clearDiscoverySync)
+    this.shutdown ??= this.stopOnce()
+    return this.shutdown
+  }
+
+  private async stopOnce(): Promise<void> {
+    await this.startup?.catch(() => {})
     this.subscriptions.clear()
     for (const connectionId of [...this.inflight.keys()]) this.abortInflight(connectionId)
     await this.server?.stop()
     this.server = undefined
     await this.discovery.clear()
+    // Keep the synchronous exit fallback until asynchronous cleanup finishes.
+    process.removeListener('exit', this.clearDiscoverySync)
   }
 
   private readonly clearDiscoverySync = (): void => {
@@ -965,9 +979,10 @@ export class BridgeCore {
    */
   private async publishDiscovery(): Promise<void> {
     const server = this.server
-    if (server === undefined || server.port === undefined) return
+    if (this.stopping || server === undefined || server.port === undefined) return
     try {
       const dshVersion = await this.dshVersion()
+      if (this.stopping) return
       await this.discovery.publish({
         protocolVersion: BRIDGE_PROTOCOL_VERSION,
         plugin: BRIDGE_PLUGIN_NAME,

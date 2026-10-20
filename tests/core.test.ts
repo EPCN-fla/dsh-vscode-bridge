@@ -382,6 +382,26 @@ async function withCore(
 
 // —— tests ——
 
+test('stop drains pending startup and removes the exit listener only after cleanup', async t => {
+  let release!: (version: string) => void
+  let entered!: () => void
+  const detected = new Promise<void>(resolve => { entered = resolve })
+  const version = new Promise<string>(resolve => { release = resolve })
+  const { deps, discoveryDir } = makeDeps({ detectHostVersion: () => { entered(); return version } })
+  const before = process.listenerCount('exit')
+  const core = new BridgeCore(deps)
+  t.after(async () => { release('0.2.1-rc.2'); await core.stop(); await rm(discoveryDir, { recursive: true, force: true }) })
+  const started = core.start()
+  await detected
+  const stopped = core.stop()
+  assert.equal(process.listenerCount('exit'), before + 1)
+  release('0.2.1-rc.2')
+  await Promise.all([started, stopped, core.stop()])
+  assert.equal(core.port, undefined)
+  assert.equal(existsSync(join(discoveryDir, `${process.pid}.json`)), false)
+  assert.equal(process.listenerCount('exit'), before)
+})
+
 test('config RPC authenticates before invoking the optional importer', async () => {
   const calls: unknown[] = []
   await withCore((deps) => {
