@@ -35,6 +35,13 @@
   "engines": {
     "node": ">=22"
   },
+  "dshCompatibility": {
+    "0.1.7-rc.1": { "cordis": "~4.0.4" },
+    "0.2.0-rc.1": { "cordis": "~4.0.4" },
+    "0.2.0-rc.2": { "cordis": "~4.0.4" },
+    "0.2.1-rc.1": { "cordis": "~4.0.5" },
+    "0.2.1-rc.2": { "cordis": "~4.0.5" }
+  },
   "scripts": {
     "prepack": "pnpm run build",
     "prepare": "pnpm run build",
@@ -61,6 +68,7 @@
     "@deepseek-ai/dsh-skill": "0.2.1-rc.2",
     "@deepseek-ai/dsh-workspace": "0.2.1-rc.2",
     "@types/node": "^22.20.0",
+    "semver": "7.8.5",
     "typescript": "^6.0.3"
   }
 }
