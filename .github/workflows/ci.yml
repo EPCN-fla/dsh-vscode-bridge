@@ -13,16 +13,33 @@ concurrency:
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
+  compatibility:
+    name: Read supported DSH versions
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    outputs:
+      matrix: ${{ steps.matrix.outputs.matrix }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Read package compatibility
+        id: matrix
+        run: node scripts/ci-compatibility.mjs matrix
+
   verify:
     name: DSH ${{ matrix.dsh-version }} · Node 22 + 24
+    needs: compatibility
     if: github.event_name == 'pull_request'
     runs-on: ubuntu-latest
     permissions:
       contents: read
     strategy:
       fail-fast: false
-      matrix:
-        dsh-version: ['0.1.7-rc.1', '0.2.0-rc.1', '0.2.0-rc.2', '0.2.1-rc.1', '0.2.1-rc.2']
+      matrix: ${{ fromJSON(needs.compatibility.outputs.matrix) }}
     env:
       DSH_TEST_VERSION: ${{ matrix.dsh-version }}
     steps:
@@ -42,8 +59,8 @@ jobs:
         run: |
           # Validate the repository lock first, without lifecycle scripts.
           pnpm install --frozen-lockfile --ignore-scripts
-          if [ "$DSH_TEST_VERSION" != '0.2.1-rc.2' ]; then
-            node --input-type=module -e 'import fs from "node:fs"; const p = JSON.parse(fs.readFileSync("package.json", "utf8")); for (const name of Object.keys(p.devDependencies)) if (name.startsWith("@deepseek-ai/dsh-")) p.devDependencies[name] = process.env.DSH_TEST_VERSION; p.devDependencies["@deepseek-ai/cordis"] = process.env.DSH_TEST_VERSION.startsWith("0.2.1") ? "~4.0.5" : "~4.0.4"; fs.writeFileSync("package.json", JSON.stringify(p, null, 2) + "\n");'
+          CHANGED=$(node scripts/ci-compatibility.mjs select "$DSH_TEST_VERSION")
+          if [ "$CHANGED" = 'changed=true' ]; then
             pnpm install --lockfile-only --no-frozen-lockfile --ignore-scripts
           fi
 

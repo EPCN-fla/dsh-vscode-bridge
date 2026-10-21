@@ -264,7 +264,9 @@ pnpm run build       # 产出 lib/ 与 lib/types/
 
 ### CI 触发与报告
 
-普通分支推送不触发 CI。PR 创建、更新或重新打开时，按支持的 5 个 DSH 版本分别创建 job；每个 job 内依次验证 Node 22 和 24，执行类型检查、测试和构建，Node 22 另执行精确宿主导入 smoke。某个版本或 Node 验证失败不取消其他版本/Node 的结果收集，失败仍会使 job 失败。每个 job 在 Actions Summary 中输出两种 Node 的状态与测试统计；日志和临时 tarball 仅留在 runner，不上传 artifacts，不创建 GitHub Release。
+普通分支推送不触发 CI。PR 创建、更新或重新打开时，由准备 job 读取 [package.json](<package.json>) 的 `dshCompatibility`，按声明的 DSH 版本动态创建验证 job；每个 job 内依次验证 Node 22 和 24，执行类型检查、测试和构建，Node 22 另执行精确宿主导入 smoke。某个版本或 Node 验证失败不取消其他版本/Node 的结果收集，失败仍会使 job 失败。每个 job 在 Actions Summary 中输出两种 Node 的状态与测试统计；日志和临时 tarball 仅留在 runner，不上传 artifacts，不创建 GitHub Release。
+
+支持版本仅在 [package.json](<package.json>) 的 `dshCompatibility` 维护：键为精确 DSH 版本，值的 `cordis` 为该宿主对应的 Cordis 开发依赖版本（精确版本或 `~` 范围）。例如 `"0.2.1-rc.2": { "cordis": "~4.0.5" }`。新增/删除对应条目即可调整矩阵，无需修改 CI YAML 或脚本；验证 job 会将全部 DSH 开发依赖切换到所选版本。`devDependencies` 仍是本地开发默认版本，不代表完整支持列表。此字段是本插件的测试元数据，不是 DSH 官方安装兼容声明；空声明或非法版本会使准备 job 失败。
 
 推送 `v*` tag 时仅安装依赖、校验 tag/版本和 latest 地板、构建并通过 npm OIDC 发布，不运行测试，也不依赖 PR 测试 job。版本号仍由维护者手动更新；建议发布前先让对应 PR 验证通过。
 

@@ -14,7 +14,7 @@ const yaml = hostRequire('js-yaml') as { load(text: string): Workflow }
 interface Step { name?: string; id?: string; if?: string; run?: string; uses?: string; with?: Record<string, unknown> }
 interface Workflow {
   on: { pull_request: unknown; push: { tags: string[]; branches?: unknown } }
-  jobs: Record<string, { if: string; needs?: unknown; strategy?: { 'fail-fast': boolean; matrix: Record<string, unknown> }; steps: Step[] }>
+  jobs: Record<string, { if: string; needs?: unknown; strategy?: { 'fail-fast': boolean; matrix: string }; steps: Step[] }>
 }
 
 test('CI triggers PR jobs per DSH and verifies both Node versions within each job', async () => {
@@ -25,8 +25,11 @@ test('CI triggers PR jobs per DSH and verifies both Node versions within each jo
   const job = workflow.jobs.verify!
   assert.equal(job.if, "github.event_name == 'pull_request'")
   assert.equal(job.strategy?.['fail-fast'], false)
-  assert.deepEqual(Object.keys(job.strategy!.matrix), ['dsh-version'])
-  assert.deepEqual(job.strategy!.matrix['dsh-version'], ['0.1.7-rc.1', '0.2.0-rc.1', '0.2.0-rc.2', '0.2.1-rc.1', '0.2.1-rc.2'])
+  assert.equal(job.needs, 'compatibility')
+  assert.equal(job.strategy!.matrix, '${{ fromJSON(needs.compatibility.outputs.matrix) }}')
+  assert.equal(workflow.jobs.compatibility!.if, "github.event_name == 'pull_request'")
+  assert.equal(workflow.jobs.compatibility!.steps.at(-1)?.run, 'node scripts/ci-compatibility.mjs matrix')
+  assert.doesNotMatch(text, /0\.2\.1|0\.2\.0|0\.1\.7|~4\.0\./)
   assert.deepEqual(job.steps.filter(step => step.uses === 'actions/setup-node@v4').map(step => step.with?.['node-version']), [22, 24])
   assert.equal(job.steps.find(step => step.id === 'verify22')?.run, 'node scripts/ci-verify.mjs verify 22')
   assert.equal(job.steps.find(step => step.id === 'verify24')?.run, 'node scripts/ci-verify.mjs verify 24')
@@ -47,6 +50,7 @@ for (const failure of ['', 'test', 'install']) {
   test(`CI runner preserves command outcomes and summary when ${failure || 'nothing'} fails`, async t => {
     const root = await mkdtemp(join(tmpdir(), 'bridge-ci-'))
     t.after(() => rm(root, { recursive: true, force: true }))
+    await writeFile(join(root, 'package.json'), JSON.stringify({ dshCompatibility: { '9.8.7-rc.1': { cordis: '~4.0.5' } } }))
     const bin = join(root, 'bin')
     await mkdir(bin)
     const command = join(bin, 'pnpm')
@@ -55,7 +59,7 @@ if (action === 'test') console.log('# tests 3\\n# pass 2\\n# fail 1\\n# skipped 
 process.exitCode = action === process.env.FAIL_COMMAND ? 1 : 0;\n`)
     await chmod(command, 0o755)
     const major = process.versions.node.split('.')[0]!
-    const env = { ...process.env, PATH: bin + delimiter + process.env.PATH, DSH_TEST_VERSION: '0.2.1-rc.2', FAIL_COMMAND: failure }
+    const env = { ...process.env, PATH: bin + delimiter + process.env.PATH, DSH_TEST_VERSION: '9.8.7-rc.1', FAIL_COMMAND: failure }
     const result = spawnSync(process.execPath, [runner, 'verify', major], { cwd: root, env, encoding: 'utf8', timeout: 10000 })
     assert.equal(result.status, failure ? 1 : 0, result.stderr)
     const report = JSON.parse(await readFile(join(root, `.sandbox/ci/node-${major}.json`), 'utf8'))

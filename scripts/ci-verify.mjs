@@ -2,10 +2,11 @@
 import { spawnSync } from 'node:child_process'
 import { mkdirSync, readFileSync, writeFileSync, appendFileSync } from 'node:fs'
 import { resolve } from 'node:path'
+import { readCompatibility } from './ci-compatibility.mjs'
 
 const [mode, major] = process.argv.slice(2)
 const directory = resolve('.sandbox/ci')
-const versions = ['0.1.7-rc.1', '0.2.0-rc.1', '0.2.0-rc.2', '0.2.1-rc.1', '0.2.1-rc.2']
+const versions = Object.keys(readCompatibility().entries)
 const version = process.env.DSH_TEST_VERSION
 if (!versions.includes(version)) throw new Error('DSH_TEST_VERSION must name a supported exact version')
 
