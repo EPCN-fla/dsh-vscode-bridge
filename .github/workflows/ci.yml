@@ -146,10 +146,18 @@ jobs:
               fi
             }
             if [ -n "$LATEST" ]; then
-              npx --yes semver@7 "$PKG_VERSION" -r ">$LATEST" > /dev/null || {
-                echo "::error::$PKG_VERSION 不高于现有 latest ($LATEST)，拒绝让 latest 回退。"
-                exit 1
-              }
+              # 使用锁文件中的直接依赖，不依赖 npx 临时安装或 PATH 上的 semver。
+              if node scripts/check-release-version.mjs "$PKG_VERSION" "$LATEST"; then
+                :
+              else
+                STATUS=$?
+                if [ "$STATUS" -eq 1 ]; then
+                  echo "::error::$PKG_VERSION 不高于现有 latest ($LATEST)，拒绝让 latest 回退。"
+                else
+                  echo "::error::版本门禁执行失败（退出码 $STATUS），不是版本比较拒绝；请检查依赖或注册表版本输出。"
+                fi
+                exit "$STATUS"
+              fi
             fi
             echo "stable $PKG_VERSION → dist-tag latest"
           fi
