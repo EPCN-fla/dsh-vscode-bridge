@@ -1,16 +1,5 @@
-# CI: PR 运行编译+测试；标签推送运行编译+测试+发布。
-# 普通分支推送不触发（on.push 只匹配 tags）。
-#
-# 发布使用 npm Trusted Publishing（OIDC），无需任何长期 token。前置配置
-# （一次性，在 npmjs.com 完成）：包 dsh-vscode-bridge → Settings →
-# Trusted Publisher → GitHub Actions：owner = EPCN-fla，repository =
-# dsh-vscode-bridge，workflow filename = ci.yml（environment 留空）。
-# 版本号由维护者手工升级（本工作流绝不改版本）；tag 必须等于
-# v${package.json.version}，否则语义门禁拒绝发布。
-#
-# 本仓库使用 pnpm（pnpm-lock.yaml）；仅发布步骤改用 npm CLI——OIDC 可信
-# 发布由 npm CLI ≥ 11.5.1 验证支持，pnpm publish 不在此依赖其实现差异。
-
+# Branch pushes do not run CI. PR: one job per DSH, Node 22 then 24.
+# v* tags: build + npm Trusted Publishing only; no tests or GitHub Release.
 name: ci
 
 on:
@@ -21,112 +10,114 @@ on:
 
 concurrency:
   group: ci-${{ github.ref }}
-  cancel-in-progress: true
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
-  # 编译 + 测试：PR 与标签推送都运行。
   verify:
-    name: build + test
+    name: DSH ${{ matrix.dsh-version }} · Node 22 + 24
+    if: github.event_name == 'pull_request'
     runs-on: ubuntu-latest
     permissions:
       contents: read
     strategy:
+      fail-fast: false
       matrix:
-        # 22 是 engines 下限、24 是当前主线：两条腿都跑。测试以 node --test
-        # 直跑 type-stripped TS，需要不带旗标的类型擦除（Node ≥ 22.18 /
-        # ≥ 23.6；setup-node 的 22 解析为 22.x 最新版，天然满足）。
-        node-version: [22, 24]
         dsh-version: ['0.1.7-rc.1', '0.2.0-rc.1', '0.2.0-rc.2', '0.2.1-rc.1', '0.2.1-rc.2']
+    env:
+      DSH_TEST_VERSION: ${{ matrix.dsh-version }}
     steps:
       - uses: actions/checkout@v4
 
-      # 版本取自 package.json 的 packageManager 字段。
       - uses: pnpm/action-setup@v4
 
-      - uses: actions/setup-node@v4
+      - name: Set up Node 22
+        id: setup22
+        uses: actions/setup-node@v4
         with:
-          node-version: ${{ matrix.node-version }}
+          node-version: 22
           cache: pnpm
 
-      # --frozen-lockfile 严格按 pnpm-lock.yaml 安装。
-      - run: pnpm install --frozen-lockfile
-
-      - name: select exact DSH development cohort
-        if: matrix.dsh-version != '0.2.1-rc.2'
-        env:
-          DSH_TEST_VERSION: ${{ matrix.dsh-version }}
+      - name: Select exact DSH cohort
+        id: cohort
         run: |
-          node --input-type=module -e 'import fs from "node:fs"; const p = JSON.parse(fs.readFileSync("package.json", "utf8")); for (const name of Object.keys(p.devDependencies)) if (name.startsWith("@deepseek-ai/dsh-")) p.devDependencies[name] = process.env.DSH_TEST_VERSION; p.devDependencies["@deepseek-ai/cordis"] = process.env.DSH_TEST_VERSION.startsWith("0.2.1") ? "~4.0.5" : "~4.0.4"; fs.writeFileSync("package.json", JSON.stringify(p, null, 2) + "\n");'
-          pnpm install --no-frozen-lockfile --ignore-scripts
+          # Validate the repository lock first, without lifecycle scripts.
+          pnpm install --frozen-lockfile --ignore-scripts
+          if [ "$DSH_TEST_VERSION" != '0.2.1-rc.2' ]; then
+            node --input-type=module -e 'import fs from "node:fs"; const p = JSON.parse(fs.readFileSync("package.json", "utf8")); for (const name of Object.keys(p.devDependencies)) if (name.startsWith("@deepseek-ai/dsh-")) p.devDependencies[name] = process.env.DSH_TEST_VERSION; p.devDependencies["@deepseek-ai/cordis"] = process.env.DSH_TEST_VERSION.startsWith("0.2.1") ? "~4.0.5" : "~4.0.4"; fs.writeFileSync("package.json", JSON.stringify(p, null, 2) + "\n");'
+            pnpm install --lockfile-only --no-frozen-lockfile --ignore-scripts
+          fi
 
-      - name: typecheck
-        run: pnpm run typecheck
+      - name: Verify Node 22
+        id: verify22
+        if: ${{ !cancelled() && steps.cohort.outcome == 'success' }}
+        run: node scripts/ci-verify.mjs verify 22
 
-      - name: test
-        run: pnpm run test
-
-      - name: build
-        run: pnpm run build
-
-      # 真实打包并消费产物：安装 tarball 并导入宿主入口。dry-run 只列文件，
-      # 抓不住 exports 映射损坏或 files 漏收。
-      - name: pack and consume the artifact
+      # Temporary package stays on the runner; no artifact upload.
+      - name: Exact host profile import smoke (Node 22)
+        id: smoke
+        if: ${{ !cancelled() && steps.verify22.outcome == 'success' }}
         run: |
-          pnpm pack --pack-destination /tmp
-          mkdir -p /tmp/vb-consume && cd /tmp/vb-consume
-          npm init -y >/dev/null
-          npm install --no-audit --no-fund /tmp/dsh-vscode-bridge-*.tgz
-          node -e "import('dsh-vscode-bridge').then((m) => { if (m.name !== 'dsh-vscode-bridge') throw new Error('host entry name mismatch'); if (typeof m.apply !== 'function') throw new Error('apply missing'); if (!Array.isArray(m.inject)) throw new Error('inject missing'); console.log('artifact OK:', m.name) })"
-
-      # 精确宿主验证：安装临时 CLI，不使用机器的全局 dsh 或用户配置。
-      - name: exact host profile import smoke
-        if: matrix.node-version == 22
-        env:
-          DSH_TEST_VERSION: ${{ matrix.dsh-version }}
-        run: |
+          pnpm pack --pack-destination .sandbox/artifacts
           mkdir -p .sandbox/runtime
           node --input-type=module -e 'import fs from "node:fs"; fs.writeFileSync(".sandbox/runtime/package.json", JSON.stringify({ private: true, dependencies: { "@deepseek-ai/dsh": process.env.DSH_TEST_VERSION } }));'
           pnpm --dir .sandbox/runtime install --ignore-scripts --store-dir ../pnpm-store --registry=https://registry.npmjs.org
           PKG_VERSION=$(node -p "require('./package.json').version")
-          node scripts/runtime-smoke.mjs .sandbox/runtime "/tmp/dsh-vscode-bridge-${PKG_VERSION}.tgz"
+          node scripts/runtime-smoke.mjs .sandbox/runtime ".sandbox/artifacts/dsh-vscode-bridge-${PKG_VERSION}.tgz"
 
-  # 发布：仅标签推送；语义门禁全过后才 npm publish。
+      # Failure in Node 22 must not hide the Node 24 result in this same job.
+      - name: Set up Node 24
+        id: setup24
+        if: ${{ !cancelled() }}
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: pnpm
+
+      - name: Verify Node 24
+        id: verify24
+        if: ${{ !cancelled() && steps.setup24.outcome == 'success' && steps.cohort.outcome == 'success' }}
+        run: node scripts/ci-verify.mjs verify 24
+
+      - name: Test summary
+        if: always()
+        env:
+          SETUP_22: ${{ steps.setup22.outcome }}
+          SETUP_24: ${{ steps.setup24.outcome }}
+          VERIFY_22: ${{ steps.verify22.outcome }}
+          VERIFY_24: ${{ steps.verify24.outcome }}
+          SMOKE_RESULT: ${{ steps.smoke.outcome }}
+        run: node scripts/ci-verify.mjs summary
+
   publish:
-    name: npm publish
-    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/')
-    needs: [verify]
+    name: build + npm publish
+    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
     runs-on: ubuntu-latest
     permissions:
       contents: read
-      id-token: write # npm Trusted Publishing 的 OIDC 交换
+      id-token: write
     steps:
       - uses: actions/checkout@v4
-
       - uses: pnpm/action-setup@v4
-
       - uses: actions/setup-node@v4
         with:
           node-version: 24
           cache: pnpm
 
-      # Trusted Publishing 需要 npm CLI ≥ 11.5.1；钉在 11.x 主线内（不追
-      # latest，避免新版 npm 当天破坏 OIDC 交换）。
-      - name: ensure npm CLI with trusted publishing support
+      # npm Trusted Publishing requires npm >=11.5.1; never run tests on tags.
+      - name: Ensure npm CLI with trusted publishing support
         run: npm install -g npm@^11.5.1
 
-      - run: pnpm install --frozen-lockfile
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile --ignore-scripts
 
-      # 语义门禁 1：tag 必须等于 v${package.json.version}。
       - name: gate — tag matches package.json version
         run: |
           PKG_VERSION=$(node -p "require('./package.json').version")
-          if [ "${{ github.ref_name }}" != "v$PKG_VERSION" ]; then
-            echo "::error::tag ${{ github.ref_name }} != v$PKG_VERSION (package.json). 先手工升级版本号再打标签。"
+          if [ "$GITHUB_REF_NAME" != "v$PKG_VERSION" ]; then
+            echo "::error::tag $GITHUB_REF_NAME != v$PKG_VERSION (package.json). 先手工升级版本号再打标签。"
             exit 1
           fi
 
-      # 语义门禁 2：预发布版本只能去非 latest 的 dist-tag（本项目声明为
-      # next）；稳定版本发布前拒绝让 latest 回退到更低版本。
       - name: gate — dist-tag and latest-floor
         run: |
           PKG_VERSION=$(node -p "require('./package.json').version")
@@ -135,8 +126,7 @@ jobs:
             echo "prerelease $PKG_VERSION → dist-tag next"
           else
             echo "DIST_TAG=latest" >> "$GITHUB_ENV"
-            # fail closed：读不到当前 latest（网络/注册表故障）就拒绝盲发，
-            # 而不是跳过地板检查；仅 E404（包从未发布）视为无地板。
+            # Fail closed except E404 (package not published yet).
             LATEST=$(npm view dsh-vscode-bridge dist-tags.latest 2>&1) || {
               if echo "$LATEST" | grep -q 'E404'; then
                 LATEST=""
@@ -146,7 +136,6 @@ jobs:
               fi
             }
             if [ -n "$LATEST" ]; then
-              # 使用锁文件中的直接依赖，不依赖 npx 临时安装或 PATH 上的 semver。
               if node scripts/check-release-version.mjs "$PKG_VERSION" "$LATEST"; then
                 :
               else
@@ -162,8 +151,10 @@ jobs:
             echo "stable $PKG_VERSION → dist-tag latest"
           fi
 
-      # OIDC 可信发布：CLI 自动用 GitHub 的 OIDC token 换取短期发布凭据，
-      # 并自动生成 provenance 证明（无需 --provenance、无需 NODE_AUTH_TOKEN）。
-      # prepack 会在发布前再跑一次 build，保证发布产物与源码同步。
-      - name: publish (OIDC trusted publishing)
-        run: npm publish --access public --tag "$DIST_TAG"
+      - name: Build
+        run: pnpm run build
+
+      # Build is explicit above. Skip prepare/prepack to avoid implicit work;
+      # npm OIDC publishing still runs. No artifacts or GitHub Release upload.
+      - name: Publish (OIDC trusted publishing)
+        run: npm publish --ignore-scripts --access public --tag "$DIST_TAG"

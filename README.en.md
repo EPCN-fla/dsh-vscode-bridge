@@ -266,6 +266,12 @@ pnpm run test        # node:test over type-stripped TS
 pnpm run build       # emit lib/ + lib/types/
 ```
 
+### CI triggers and reports
+
+Ordinary branch pushes do not trigger CI. Opening, updating or reopening a PR creates one job for each of the five supported DSH versions. Each job verifies Node 22 and then Node 24, running typechecking, tests and build; Node 22 also runs the exact-host import smoke. A failed version or Node leg does not cancel collection of the other results, but still fails its job. Each job writes both Node outcomes and test counts to Actions Summary. Logs and temporary tarballs stay on the runner; no artifacts are uploaded and no GitHub Release is created.
+
+Pushing a `v*` tag only installs dependencies, checks tag/version and latest-floor gates, builds and publishes to npm using OIDC. It runs no tests and does not depend on the PR test job. Maintainers still choose version bumps manually; pass the corresponding PR checks before publishing.
+
 All tests live in `tests/`:
 
 | File | Coverage |

@@ -262,6 +262,12 @@ pnpm run test        # node:test（type-stripped TS）
 pnpm run build       # 产出 lib/ 与 lib/types/
 ```
 
+### CI 触发与报告
+
+普通分支推送不触发 CI。PR 创建、更新或重新打开时，按支持的 5 个 DSH 版本分别创建 job；每个 job 内依次验证 Node 22 和 24，执行类型检查、测试和构建，Node 22 另执行精确宿主导入 smoke。某个版本或 Node 验证失败不取消其他版本/Node 的结果收集，失败仍会使 job 失败。每个 job 在 Actions Summary 中输出两种 Node 的状态与测试统计；日志和临时 tarball 仅留在 runner，不上传 artifacts，不创建 GitHub Release。
+
+推送 `v*` tag 时仅安装依赖、校验 tag/版本和 latest 地板、构建并通过 npm OIDC 发布，不运行测试，也不依赖 PR 测试 job。版本号仍由维护者手动更新；建议发布前先让对应 PR 验证通过。
+
 测试全部位于 `tests/`：
 
 | 文件 | 覆盖 |
