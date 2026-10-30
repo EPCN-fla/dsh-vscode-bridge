@@ -77,6 +77,7 @@ jobs:
           pnpm pack --pack-destination .sandbox/artifacts
           mkdir -p .sandbox/runtime
           node --input-type=module -e 'import fs from "node:fs"; fs.writeFileSync(".sandbox/runtime/package.json", JSON.stringify({ private: true, dependencies: { "@deepseek-ai/dsh": process.env.DSH_TEST_VERSION } }));'
+          printf 'packages: []\n' > .sandbox/runtime/pnpm-workspace.yaml
           pnpm --dir .sandbox/runtime install --ignore-scripts --store-dir ../pnpm-store --registry=https://registry.npmjs.org
           PKG_VERSION=$(node -p "require('./package.json').version")
           node scripts/runtime-smoke.mjs .sandbox/runtime ".sandbox/artifacts/dsh-vscode-bridge-${PKG_VERSION}.tgz"
