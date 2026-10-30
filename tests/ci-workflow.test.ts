@@ -35,6 +35,12 @@ test('CI triggers PR jobs per DSH and verifies both Node versions within each jo
   assert.equal(job.steps.find(step => step.id === 'verify24')?.run, 'node scripts/ci-verify.mjs verify 24')
   assert.match(job.steps.find(step => step.id === 'setup24')!.if!, /!cancelled\(\)/)
   assert.match(job.steps.find(step => step.id === 'verify24')!.if!, /!cancelled\(\)/)
+  const smoke = job.steps.find(step => step.id === 'smoke')?.run ?? ''
+  const isolateRuntime = "printf 'packages: []\\n' > .sandbox/runtime/pnpm-workspace.yaml"
+  const installRuntime = 'pnpm --dir .sandbox/runtime install'
+  assert.ok(smoke.includes(isolateRuntime), 'smoke runtime must not inherit the repository pnpm workspace')
+  assert.ok(smoke.includes(installRuntime))
+  assert.ok(smoke.indexOf(isolateRuntime) < smoke.indexOf(installRuntime), 'runtime workspace isolation must precede installation')
   assert.equal(job.steps.find(step => step.name === 'Test summary')?.if, 'always()')
   const publish = workflow.jobs.publish!
   assert.match(publish.if, /refs\/tags\/v/)
