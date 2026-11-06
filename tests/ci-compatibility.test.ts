@@ -8,7 +8,8 @@ import { spawnSync } from 'node:child_process'
 
 const script = fileURLToPath(new URL('../scripts/ci-compatibility.mjs', import.meta.url))
 const fixture = () => ({ name: 'fixture', version: '0.4.0', custom: { untouched: true },
-  dshCompatibility: { '9.8.7-rc.1': { cordis: '~4.0.5' }, '10.0.0': { cordis: '~5.1.0' } },
+  dshCompatibility: { '9.8.7-rc.1': { cordis: '~4.0.5' }, '10.0.0': { cordis: '~5.1.0', node: [24],
+    cordisPeers: { '@deepseek-ai/cordis-plugin-group': '~1.1.0', '@deepseek-ai/cordis-plugin-include': '~1.1.0', '@deepseek-ai/cordis-plugin-loader': '~1.1.0' } } },
   devDependencies: { '@deepseek-ai/dsh-agent': '9.8.7-rc.1', '@deepseek-ai/dsh-session': '9.8.7-rc.1', '@deepseek-ai/cordis': '~4.0.5', typescript: '6.0.3' },
 })
 function run(root: string, args: string[], output = join(root, 'output')) {
@@ -24,9 +25,12 @@ test('matrix comes from manifest alone and supports new versions without script 
   await writeFile(path, original)
   const result = run(root, ['matrix'])
   assert.equal(result.status, 0, result.stderr)
-  assert.deepEqual(JSON.parse(result.stdout), { 'dsh-version': Object.keys(manifest.dshCompatibility) })
+  assert.deepEqual(JSON.parse(result.stdout), { include: [
+    { 'dsh-version': '9.8.7-rc.1', node: [22, 24] },
+    { 'dsh-version': '10.0.0', node: [24] },
+  ] })
   assert.equal(await readFile(path, 'utf8'), original)
-  assert.match(await readFile(join(root, 'output'), 'utf8'), /^matrix=\{"dsh-version":/)
+  assert.match(await readFile(join(root, 'output'), 'utf8'), /^matrix=\{"include":/)
 })
 
 test('cohort selection uses declared Cordis and preserves unrelated manifest fields', async t => {
@@ -44,7 +48,12 @@ test('cohort selection uses declared Cordis and preserves unrelated manifest fie
   assert.equal(selected.stdout.trim(), 'changed=true')
   const after = JSON.parse(await readFile(path, 'utf8'))
   assert.deepEqual(after, { ...manifest, devDependencies: { ...manifest.devDependencies,
-    '@deepseek-ai/dsh-agent': '10.0.0', '@deepseek-ai/dsh-session': '10.0.0', '@deepseek-ai/cordis': '~5.1.0' } })
+    '@deepseek-ai/dsh-agent': '10.0.0', '@deepseek-ai/dsh-session': '10.0.0', '@deepseek-ai/cordis': '~5.1.0',
+    '@deepseek-ai/cordis-plugin-group': '~1.1.0', '@deepseek-ai/cordis-plugin-include': '~1.1.0', '@deepseek-ai/cordis-plugin-loader': '~1.1.0' } })
+  const back = run(root, ['select', '9.8.7-rc.1'])
+  assert.equal(back.stdout.trim(), 'changed=true')
+  const restored = JSON.parse(await readFile(path, 'utf8'))
+  assert.deepEqual(restored, manifest)
   assert.notEqual(run(root, ['select', 'latest']).status, 0)
 })
 
@@ -53,7 +62,12 @@ test('missing, empty and invalid declarations fail rather than silently skipping
   t.after(() => rm(root, { recursive: true, force: true }))
   for (const declaration of [undefined, {}, [], { latest: { cordis: '~4.0.5' } },
     { '^0.2.1': { cordis: '~4.0.5' } }, { '0.2.1-rc.01': { cordis: '~4.0.5' } },
-    { '0.2.1': {} }, { '0.2.1': { cordis: 'bad\noutput=value' } }]) {
+    { '0.2.1': {} }, { '0.2.1': { cordis: 'bad\noutput=value' } },
+    { '0.2.1': { cordis: '~4.0.5', node: [] } }, { '0.2.1': { cordis: '~4.0.5', node: [22, 22] } },
+    { '0.2.1': { cordis: '~4.0.5', node: [23] } }, { '0.2.1': { cordis: '~4.0.5', node: '24' } },
+    { '0.2.1': { cordis: '~4.0.5', cordisPeers: [] } },
+    { '0.2.1': { cordis: '~4.0.5', cordisPeers: { unknown: '~1.1.0' } } },
+    { '0.2.1': { cordis: '~4.0.5', cordisPeers: { '@deepseek-ai/cordis-plugin-loader': 'bad' } } }]) {
     await writeFile(join(root, 'package.json'), JSON.stringify({ dshCompatibility: declaration }))
     assert.notEqual(run(root, ['matrix']).status, 0)
   }
@@ -64,5 +78,7 @@ test('repository manifest produces its current matrix without installing depende
   const manifest = JSON.parse(await readFile(join(root, 'package.json'), 'utf8'))
   const result = spawnSync(process.execPath, [script, 'matrix'], { cwd: root, env: { ...process.env, GITHUB_OUTPUT: '' }, encoding: 'utf8' })
   assert.equal(result.status, 0, result.stderr)
-  assert.deepEqual(JSON.parse(result.stdout)['dsh-version'], Object.keys(manifest.dshCompatibility))
+  const matrix = JSON.parse(result.stdout).include as { 'dsh-version': string; node: number[] }[]
+  assert.deepEqual(matrix.map(entry => entry['dsh-version']), Object.keys(manifest.dshCompatibility))
+  assert.deepEqual(matrix.find(entry => entry['dsh-version'] === '0.2.2-rc.1')?.node, [24])
 })

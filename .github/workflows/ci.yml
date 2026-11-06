@@ -1,4 +1,4 @@
-# Branch pushes do not run CI. PR: one job per DSH, Node 22 then 24.
+# Branch pushes do not run CI. PR: one job per DSH, using its declared Node majors.
 # v* tags: build + npm Trusted Publishing only; no tests or GitHub Release.
 name: ci
 
@@ -31,7 +31,7 @@ jobs:
         run: node scripts/ci-compatibility.mjs matrix
 
   verify:
-    name: DSH ${{ matrix.dsh-version }} · Node 22 + 24
+    name: DSH ${{ matrix.dsh-version }} · Node compatibility
     needs: compatibility
     if: github.event_name == 'pull_request'
     runs-on: ubuntu-latest
@@ -47,11 +47,11 @@ jobs:
 
       - uses: pnpm/action-setup@v4
 
-      - name: Set up Node 22
-        id: setup22
+      - name: Set up initial supported Node
+        id: setupInitial
         uses: actions/setup-node@v4
         with:
-          node-version: 22
+          node-version: ${{ contains(matrix.node, 22) && '22' || '24' }}
           cache: pnpm
 
       - name: Select exact DSH cohort
@@ -61,18 +61,20 @@ jobs:
           pnpm install --frozen-lockfile --ignore-scripts
           CHANGED=$(node scripts/ci-compatibility.mjs select "$DSH_TEST_VERSION")
           if [ "$CHANGED" = 'changed=true' ]; then
+            # Re-resolve the selected host's peer cohort without target-lock preference.
+            rm pnpm-lock.yaml
             pnpm install --lockfile-only --no-frozen-lockfile --ignore-scripts
           fi
 
       - name: Verify Node 22
         id: verify22
-        if: ${{ !cancelled() && steps.cohort.outcome == 'success' }}
+        if: ${{ !cancelled() && contains(matrix.node, 22) && steps.cohort.outcome == 'success' }}
         run: node scripts/ci-verify.mjs verify 22
 
       # Temporary package stays on the runner; no artifact upload.
       - name: Exact host profile import smoke (Node 22)
         id: smoke
-        if: ${{ !cancelled() && steps.verify22.outcome == 'success' }}
+        if: ${{ !cancelled() && contains(matrix.node, 22) && steps.verify22.outcome == 'success' }}
         run: |
           pnpm pack --pack-destination .sandbox/artifacts
           mkdir -p .sandbox/runtime
@@ -93,17 +95,29 @@ jobs:
 
       - name: Verify Node 24
         id: verify24
-        if: ${{ !cancelled() && steps.setup24.outcome == 'success' && steps.cohort.outcome == 'success' }}
+        if: ${{ !cancelled() && contains(matrix.node, 24) && steps.setup24.outcome == 'success' && steps.cohort.outcome == 'success' }}
         run: node scripts/ci-verify.mjs verify 24
+
+      - name: Exact host profile import smoke (Node 24)
+        id: smoke24
+        if: ${{ !cancelled() && !contains(matrix.node, 22) && contains(matrix.node, 24) && steps.verify24.outcome == 'success' }}
+        run: |
+          pnpm pack --pack-destination .sandbox/artifacts
+          mkdir -p .sandbox/runtime
+          node --input-type=module -e 'import fs from "node:fs"; fs.writeFileSync(".sandbox/runtime/package.json", JSON.stringify({ private: true, dependencies: { "@deepseek-ai/dsh": process.env.DSH_TEST_VERSION } }));'
+          printf 'packages: []\n' > .sandbox/runtime/pnpm-workspace.yaml
+          pnpm --dir .sandbox/runtime install --ignore-scripts --store-dir ../pnpm-store --registry=https://registry.npmjs.org
+          PKG_VERSION=$(node -p "require('./package.json').version")
+          node scripts/runtime-smoke.mjs .sandbox/runtime ".sandbox/artifacts/dsh-vscode-bridge-${PKG_VERSION}.tgz"
 
       - name: Test summary
         if: always()
         env:
-          SETUP_22: ${{ steps.setup22.outcome }}
+          SETUP_22: ${{ contains(matrix.node, 22) && steps.setupInitial.outcome || 'skipped' }}
           SETUP_24: ${{ steps.setup24.outcome }}
           VERIFY_22: ${{ steps.verify22.outcome }}
           VERIFY_24: ${{ steps.verify24.outcome }}
-          SMOKE_RESULT: ${{ steps.smoke.outcome }}
+          SMOKE_RESULT: ${{ contains(matrix.node, 22) && steps.smoke.outcome || steps.smoke24.outcome }}
         run: node scripts/ci-verify.mjs summary
 
   publish:

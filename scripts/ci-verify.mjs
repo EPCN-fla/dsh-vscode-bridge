@@ -22,7 +22,7 @@ if (mode === 'summary') {
     const count = tests ? ` (${tests.pass} passed, ${tests.fail} failed, ${tests.skipped} skipped)` : ''
     lines.push(`| ${report?.node ?? node} | ${process.env[`SETUP_${node}`] ?? 'unknown'} | ${process.env[`VERIFY_${node}`] ?? 'unknown'} | ${status('install')} | ${status('typecheck')} | ${status('test')}${count} | ${status('build')} |`)
   }
-  lines.push('', `Node 22 exact-host smoke: **${process.env.SMOKE_RESULT ?? 'not run'}**.`,
+  lines.push('', `Exact-host smoke on a supported Node: **${process.env.SMOKE_RESULT ?? 'not run'}**.`,
     '', 'Logs and temporary tarballs stay on the runner; no artifacts or GitHub Release are uploaded.', '')
   const text = lines.join('\n')
   if (process.env.GITHUB_STEP_SUMMARY) appendFileSync(process.env.GITHUB_STEP_SUMMARY, text)
