@@ -11,13 +11,13 @@ const runner = fileURLToPath(new URL('../scripts/ci-verify.mjs', import.meta.url
 const require = createRequire(import.meta.url)
 const hostRequire = createRequire(require.resolve('@deepseek-ai/dsh-app-boot'))
 const yaml = hostRequire('js-yaml') as { load(text: string): Workflow }
-interface Step { name?: string; id?: string; if?: string; run?: string; uses?: string; with?: Record<string, unknown> }
+interface Step { name?: string; id?: string; if?: string; run?: string; uses?: string; with?: Record<string, unknown>; env?: Record<string, unknown> }
 interface Workflow {
   on: { pull_request: unknown; push: { tags: string[]; branches?: unknown } }
   jobs: Record<string, { if: string; needs?: unknown; strategy?: { 'fail-fast': boolean; matrix: string }; steps: Step[] }>
 }
 
-test('CI triggers PR jobs per DSH and verifies both Node versions within each job', async () => {
+test("CI triggers PR jobs per DSH and honors each host's declared Node majors", async () => {
   const text = await readFile(new URL('../.github/workflows/ci.yml', import.meta.url), 'utf8')
   const workflow = yaml.load(text)
   assert.deepEqual(Object.keys(workflow.on).sort(), ['pull_request', 'push'])
@@ -30,18 +30,32 @@ test('CI triggers PR jobs per DSH and verifies both Node versions within each jo
   assert.equal(workflow.jobs.compatibility!.if, "github.event_name == 'pull_request'")
   assert.equal(workflow.jobs.compatibility!.steps.at(-1)?.run, 'node scripts/ci-compatibility.mjs matrix')
   assert.doesNotMatch(text, /0\.2\.1|0\.2\.0|0\.1\.7|~4\.0\./)
-  assert.deepEqual(job.steps.filter(step => step.uses === 'actions/setup-node@v4').map(step => step.with?.['node-version']), [22, 24])
-  assert.equal(job.steps.find(step => step.id === 'verify22')?.run, 'node scripts/ci-verify.mjs verify 22')
+  const cohort = job.steps.find(step => step.id === 'cohort')?.run ?? ''
+  assert.match(cohort, /rm pnpm-lock\.yaml/)
+  assert.ok(cohort.indexOf('rm pnpm-lock.yaml') < cohort.indexOf('pnpm install --lockfile-only'))
+  const nodeSetups = job.steps.filter(step => step.uses === 'actions/setup-node@v4')
+  assert.deepEqual(nodeSetups.map(step => step.with?.['node-version']), ["${{ contains(matrix.node, 22) && '22' || '24' }}", 24])
+  const verify22 = job.steps.find(step => step.id === 'verify22')
+  assert.equal(verify22?.run, 'node scripts/ci-verify.mjs verify 22')
+  assert.match(verify22?.if ?? '', /contains\(matrix\.node, 22\)/)
   assert.equal(job.steps.find(step => step.id === 'verify24')?.run, 'node scripts/ci-verify.mjs verify 24')
   assert.match(job.steps.find(step => step.id === 'setup24')!.if!, /!cancelled\(\)/)
   assert.match(job.steps.find(step => step.id === 'verify24')!.if!, /!cancelled\(\)/)
-  const smoke = job.steps.find(step => step.id === 'smoke')?.run ?? ''
+  const smokeStep = job.steps.find(step => step.id === 'smoke')
+  assert.match(smokeStep?.if ?? '', /contains\(matrix\.node, 22\)/)
+  const smoke = smokeStep?.run ?? ''
   const isolateRuntime = "printf 'packages: []\\n' > .sandbox/runtime/pnpm-workspace.yaml"
   const installRuntime = 'pnpm --dir .sandbox/runtime install'
   assert.ok(smoke.includes(isolateRuntime), 'smoke runtime must not inherit the repository pnpm workspace')
   assert.ok(smoke.includes(installRuntime))
   assert.ok(smoke.indexOf(isolateRuntime) < smoke.indexOf(installRuntime), 'runtime workspace isolation must precede installation')
-  assert.equal(job.steps.find(step => step.name === 'Test summary')?.if, 'always()')
+  const smoke24 = job.steps.find(step => step.id === 'smoke24')
+  assert.match(smoke24?.if ?? '', /!contains\(matrix\.node, 22\)/)
+  assert.match(smoke24?.if ?? '', /contains\(matrix\.node, 24\)/)
+  assert.match(smoke24?.run ?? '', /scripts\/runtime-smoke\.mjs/)
+  const summary = job.steps.find(step => step.name === 'Test summary')
+  assert.equal(summary?.if, 'always()')
+  assert.match(summary?.env?.['SMOKE_RESULT'] as string ?? '', /smoke24/)
   const publish = workflow.jobs.publish!
   assert.match(publish.if, /refs\/tags\/v/)
   assert.equal(publish.needs, undefined)

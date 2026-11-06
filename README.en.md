@@ -51,11 +51,14 @@ The correspondence matrix between plugin versions and DSH versions is as follows
 
 | Plugin version | Minimum compatible DSH version | Highest compatible DSH version |
 | --- | --- | --- |
+| 0.4.2 | 0.1.7-rc.1 | 0.2.2-rc.1 |
 | 0.4.1 | 0.1.7-rc.1 | 0.2.1-rc.5 |
 | 0.4.0 | 0.1.7-rc.1 | 0.2.1-rc.2 |
 | 0.3.x | 0.1.7-rc.1 | 0.2.0-rc.2 |
 | 0.2.x | 0.1.5-rc.2 | 0.1.7-rc.1 |
 | 0.1.x | 0.1.5-rc.2 | 0.1.5-rc.2 |
+
+The DSH `0.2.2-rc.1` host requires Node.js `>=24.9.0`; older DSH releases retain their Node 22 support.
 
 The plugin declares no DSH package in `peerDependencies`, so peer enforcement does not gate it — neither the 0.1.7 install/startup checks (DSH-0.1.7-J1-01) nor the composition-time compatibility preflight added in 0.2.0 (which disables rows whose declared `@deepseek-ai/dsh*` peers are unsatisfied; `dsh plugin allow-version` grants an exact-version exemption) looks at plugins without DSH peers.
 

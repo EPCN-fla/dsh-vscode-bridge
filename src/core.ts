@@ -316,7 +316,7 @@ export class BridgeCore {
   private async attachByHeader(sessionId: SessionId, header: SessionHeader): Promise<{ attached: boolean; workspaceId?: string; reason?: string }> {
     const registry = this.deps.workspaceRegistry
     if (registry === undefined) return { attached: false, reason: 'workspace-unavailable' }
-    if (header.parentSession !== undefined) return { attached: false, reason: 'subagent' }
+    if (header.origin === 'subagent') return { attached: false, reason: 'subagent' }
     const cwd = header.cwd
     if (cwd === undefined) return { attached: false, reason: 'no-cwd' }
     try {

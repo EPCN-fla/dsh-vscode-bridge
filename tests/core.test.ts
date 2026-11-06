@@ -17,7 +17,7 @@ const silent = { info() {}, warn() {}, error() {} }
 
 // —— mocks ——
 
-function makeSession(id: string, cwd?: string, parentSession?: string) {
+function makeSession(id: string, cwd?: string, parentSession?: string, origin?: 'subagent') {
   return {
     id,
     header: {
@@ -27,6 +27,7 @@ function makeSession(id: string, cwd?: string, parentSession?: string) {
       isSeeded: false,
       ...(cwd === undefined ? {} : { cwd }),
       ...(parentSession === undefined ? {} : { parentSession }),
+      ...(origin === undefined ? {} : { origin }),
     },
   }
 }
@@ -674,9 +675,13 @@ test('attachSession groups by cwd, skips subagents and cwd-less sessions', async
     const core = new BridgeCore(deps)
     await core.start()
     try {
-      const subagent = await core.attachSession(makeSession('child', root, 'parent') as never)
+      const subagent = await core.attachSession(makeSession('child', root, 'parent', 'subagent') as never)
       assert.equal(subagent.attached, false)
       assert.equal(subagent.reason, 'subagent')
+
+      // Historical ordinary forks retain parentSession but have no subagent origin.
+      const historicalFork = await core.attachSession(makeSession('historical-fork', root, 'parent') as never)
+      assert.equal(historicalFork.attached, true)
 
       const noCwd = await core.attachSession(makeSession('nocwd') as never)
       assert.equal(noCwd.attached, false)
@@ -684,7 +689,7 @@ test('attachSession groups by cwd, skips subagents and cwd-less sessions', async
 
       const attached = await core.attachSession(makeSession('s1', root) as never)
       assert.equal(attached.attached, true)
-      assert.deepEqual(mocks.calls.attach, ['s1'])
+      assert.deepEqual(mocks.calls.attach, ['historical-fork', 's1'])
 
       // Second session with the same cwd reuses the workspace (no new create).
       const again = await core.attachSession(makeSession('s2', root) as never)
@@ -726,7 +731,8 @@ test('workspace.attach also attaches stored (non-live) sessions by header cwd', 
       // Sessions created by a spawned ACP host are stored but never live here.
       const stored = new Map<string, unknown>([
         ['stored-1', { header: { version: 3, id: 'stored-1', createdAt: 1, isSeeded: false, cwd: root }, revision: 'r1' }],
-        ['stored-child', { header: { version: 3, id: 'stored-child', createdAt: 1, isSeeded: false, cwd: root, parentSession: 'stored-1' }, revision: 'r1' }],
+        ['stored-child', { header: { version: 3, id: 'stored-child', createdAt: 1, isSeeded: false, cwd: root, parentSession: 'stored-1', origin: 'subagent' }, revision: 'r1' }],
+        ['stored-fork', { header: { version: 3, id: 'stored-fork', createdAt: 1, isSeeded: true, cwd: root, parentSession: 'stored-1' }, revision: 'r1' }],
         ['stored-nocwd', { header: { version: 3, id: 'stored-nocwd', createdAt: 1, isSeeded: false }, revision: 'r1' }],
       ])
       ;(deps as unknown as Record<string, unknown>).sessionPersistence = {
@@ -752,6 +758,11 @@ test('workspace.attach also attaches stored (non-live) sessions by header cwd', 
       // Already a member: idempotent, no duplicate mutation.
       const repeat = await client.request('workspace.attach', { sessionId: 'stored-1' })
       assert.equal((repeat.result as { reason: string }).reason, 'already')
+
+      // A historical ordinary fork retains its source id but is not a subagent.
+      const fork = await client.request('workspace.attach', { sessionId: 'stored-fork' })
+      assert.equal((fork.result as { attached: boolean }).attached, true)
+      assert.ok(mocks.calls.attach.includes('stored-fork'))
 
       // Stored subagent and cwd-less sessions refuse like the live path.
       const child = await client.request('workspace.attach', { sessionId: 'stored-child' })
