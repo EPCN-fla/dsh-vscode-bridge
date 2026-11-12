@@ -73,12 +73,12 @@ test('missing, empty and invalid declarations fail rather than silently skipping
   }
 })
 
-test('repository manifest produces its current matrix without installing dependencies', async () => {
+test('repository manifest pins the sole DSH and Node 24 development cohort', async () => {
   const root = fileURLToPath(new URL('..', import.meta.url))
   const manifest = JSON.parse(await readFile(join(root, 'package.json'), 'utf8'))
   const result = spawnSync(process.execPath, [script, 'matrix'], { cwd: root, env: { ...process.env, GITHUB_OUTPUT: '' }, encoding: 'utf8' })
   assert.equal(result.status, 0, result.stderr)
-  const matrix = JSON.parse(result.stdout).include as { 'dsh-version': string; node: number[] }[]
-  assert.deepEqual(matrix.map(entry => entry['dsh-version']), Object.keys(manifest.dshCompatibility))
-  assert.deepEqual(matrix.find(entry => entry['dsh-version'] === '0.2.2-rc.1')?.node, [24])
+  assert.deepEqual(JSON.parse(result.stdout), { include: [{ 'dsh-version': '0.2.2-rc.2', node: [24] }] })
+  assert.equal(manifest.engines.node, '>=24.9.0')
+  assert.equal(manifest.peerDependencies['@deepseek-ai/cordis'], '^4.1.0')
 })

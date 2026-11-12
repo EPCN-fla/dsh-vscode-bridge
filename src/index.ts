@@ -92,7 +92,7 @@ export const Config: Schema<BridgePluginConfig> = Schema.object({
 })
 
 // Keep in sync with package.json#version (single source bump on release).
-const PLUGIN_VERSION = '0.4.2'
+const PLUGIN_VERSION = '0.5.0'
 
 /**
  * Mount the bridge. The Cordis wiring stays here; all behavior lives in

@@ -23,7 +23,16 @@ const web = join(home, 'profiles', 'web')
 const discovery = join(home, 'discovery')
 for (const path of [profile, web, discovery]) await mkdir(path, { recursive: true })
 await writeFile(join(profile, 'package.json'), JSON.stringify({ private: true,
-  dependencies: { 'dsh-vscode-bridge': `file:${artifact}` },
+  // The full Web preset roster references optional packages not mounted by the
+  // minimal ACP composition. Make them resolvable without enabling Web UI.
+  dependencies: {
+    'dsh-vscode-bridge': `file:${artifact}`,
+    '@deepseek-ai/dsh-agent-preset-registry': cliVersion,
+    '@deepseek-ai/dsh-cordis-host-runner': cliVersion,
+    '@deepseek-ai/dsh-plugin-market': cliVersion,
+    '@deepseek-ai/dsh-tool-cordis': cliVersion,
+    '@deepseek-ai/dsh-tool-office': cliVersion,
+  },
   dsh: { profile: { bundles: ['@deepseek-ai/dsh-base', '@deepseek-ai/dsh-acp-app'] } },
 }))
 await writeFile(join(profile, 'pnpm-workspace.yaml'), 'nodeLinker: hoisted\nautoInstallPeers: false\n')

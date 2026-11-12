@@ -51,6 +51,7 @@ The correspondence matrix between plugin versions and DSH versions is as follows
 
 | Plugin version | Minimum compatible DSH version | Highest compatible DSH version |
 | --- | --- | --- |
+| 0.5.0 | 0.2.2-rc.2 | 0.2.2-rc.2 |
 | 0.4.2 | 0.1.7-rc.1 | 0.2.2-rc.1 |
 | 0.4.1 | 0.1.7-rc.1 | 0.2.1-rc.5 |
 | 0.4.0 | 0.1.7-rc.1 | 0.2.1-rc.2 |
@@ -58,7 +59,7 @@ The correspondence matrix between plugin versions and DSH versions is as follows
 | 0.2.x | 0.1.5-rc.2 | 0.1.7-rc.1 |
 | 0.1.x | 0.1.5-rc.2 | 0.1.5-rc.2 |
 
-The DSH `0.2.2-rc.1` host requires Node.js `>=24.9.0`; older DSH releases retain their Node 22 support.
+Plugin `0.5.0` supports only DSH `0.2.2-rc.2` and Node.js `>=24.9.0`; older DSH releases and Node 22 are no longer supported.
 
 The plugin declares no DSH package in `peerDependencies`, so peer enforcement does not gate it — neither the 0.1.7 install/startup checks (DSH-0.1.7-J1-01) nor the composition-time compatibility preflight added in 0.2.0 (which disables rows whose declared `@deepseek-ai/dsh*` peers are unsatisfied; `dsh plugin allow-version` grants an exact-version exemption) looks at plugins without DSH peers.
 
@@ -79,14 +80,14 @@ dsh plugin --profile acp-vscode add dsh-vscode-bridge
 dsh plugin --profile acp-vscode add github:EPCN-fla/dsh-vscode-bridge
 ```
 
-When installed from a git source, pnpm runs the package's `prepare` script to build it automatically (requires Node `>=22`).
+When installed from a git source, pnpm runs the package's `prepare` script to build it automatically (requires Node `>=24.9.0`).
 
 ### From tarball
 
 ```sh
 git clone https://github.com/EPCN-fla/dsh-vscode-bridge.git
 cd dsh-vscode-bridge
-pnpm install
+pnpm install --no-frozen-lockfile
 pnpm run build
 pnpm pack       # produces dsh-vscode-bridge-<version>.tgz
 dsh plugin --profile acp-vscode add ./dsh-vscode-bridge-<version>.tgz
@@ -261,10 +262,10 @@ The current source exposes `config.preview` / `config.import`, importing from `w
 
 ## Development
 
-Requires Node `>=22` (engines; CI runs the full suite on both 22 and 24). Running the type-stripped TS tests directly (`node --test`) additionally needs ≥ `22.18` or ≥ `23.6` (unflagged type stripping), which the latest 22.x CI resolves to satisfies out of the box.
+Requires Node `>=24.9.0`, matching the DSH `0.2.2-rc.2` engine. Development, CI, and real-Host smoke tests use Node 24 only.
 
 ```sh
-pnpm install
+pnpm install --no-frozen-lockfile
 pnpm run typecheck   # tsc --noEmit
 pnpm run test        # node:test over type-stripped TS
 pnpm run build       # emit lib/ + lib/types/
@@ -272,7 +273,7 @@ pnpm run build       # emit lib/ + lib/types/
 
 ### CI triggers and reports
 
-Ordinary branch pushes do not trigger CI. Opening, updating or reopening a PR runs a preparation job that reads `dshCompatibility` from [package.json](<package.json>) and generates one verification job per declared DSH version. Each job verifies Node 22 and then Node 24, running typechecking, tests and build; Node 22 also runs the exact-host import smoke. A failed version or Node leg does not cancel collection of the other results, but still fails its job. Each job writes both Node outcomes and test counts to Actions Summary. Logs and temporary tarballs stay on the runner; no artifacts are uploaded and no GitHub Release is created.
+Ordinary branch pushes do not trigger CI. Opening, updating or reopening a PR runs a preparation job that reads `dshCompatibility` from [package.json](<package.json>) and generates one verification job per declared DSH version. The sole current target is DSH `0.2.2-rc.2`, verified only on Node 24 with typechecking, tests, build, and exact-host import smoke. A failure fails its job and is recorded with test counts in Actions Summary. Logs and temporary tarballs stay on the runner; no artifacts are uploaded and no GitHub Release is created.
 
 Maintain supported versions only in `dshCompatibility` in [package.json](<package.json>): each key is an exact DSH version; its `cordis` value is the matching Cordis development dependency (exact or tilde range), for example `"0.2.1-rc.2": { "cordis": "~4.0.5" }`. Add or remove entries without editing CI YAML or scripts. Verification jobs select all DSH development dependencies together. `devDependencies` remains the local development baseline, not the full compatibility list. This is plugin-owned test metadata, not an official DSH install-compatibility declaration. Empty or invalid declarations fail the preparation job.
 
