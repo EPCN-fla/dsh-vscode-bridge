@@ -87,6 +87,8 @@ export interface BridgeCapabilities {
   readonly sessionTitle: boolean
   /** Session archive ("delete") via `workspaceRegistry.archiveSession`. */
   readonly sessionArchive: boolean
+  /** Origin/parent metadata distinguishes subagents from resumable ordinary forks. */
+  readonly sessionOrigin: boolean
   /** Agent preset roster and per-session switching via `agentPresets`. */
   readonly presets: boolean
   /** Permission preset query/switch via `permissionPresets`. */
@@ -101,6 +103,20 @@ export interface BridgeCapabilities {
   readonly eventPush: boolean
   /** Web profile model/preset import; optional for older bridge clients. */
   readonly configSync?: boolean
+}
+
+/** Session row returned by session.list/get. Optional agentPreset is omitted
+ * when its projection cannot be read; null is an authoritative projected value. */
+export interface BridgeSessionRow {
+  readonly sessionId: string
+  readonly live: boolean
+  readonly cwd: string | null
+  readonly createdAt: number
+  readonly parentSession: string | null
+  readonly origin: 'subagent' | null
+  readonly title?: string | null
+  readonly permission?: string | null
+  readonly agentPreset?: string | null
 }
 
 /** Result of `bridge.handshake`. */

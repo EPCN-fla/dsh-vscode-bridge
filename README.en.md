@@ -16,8 +16,9 @@ This plugin closes that gap from inside the harness process: a loopback TCP list
 
 - **Workspace grouping fix**: every newly created session is attached to the workspace owning its cwd on `session/created` (creating the workspace when missing) — the "ungrouped" bucket stops filling up.
 - **Native session titles**: read the folded title of any session, rename any live session through `sessionTitle.rename`.
+- **Subagent session identity**: `session.list` and `session.get` return `parentSession` and `origin`; `origin: "subagent"` identifies a subagent, while an ordinary fork returns `origin: null` even when it retains a parent session id.
 - **Session delete**: product-level deletion through the registry-wide archive set (`workspaceRegistry.archiveSession`).
-- **Agent presets**: list the roster with the effective default, read a session's composed preset, switch blank sessions (`agent-preset/locked` once a turn has run — upstream contract).
+- **Agent presets**: list the roster with the effective default, read the current preset projection, switch blank sessions (`agent-preset/locked` once a turn has run — upstream contract).
 - **Permission presets**: query the option list plus a session's current preset, and switch it — sandbox mode and approval policy follow immediately.
 - **Event push**: subscribed clients receive `bridge.event` notifications for plan/todo/title/permission/command-lifecycle session events, with exact or prefix (`plan/`, `command/`) type filters.
 - **Native slash commands**: list the commands effective for a session (`/compact`, `/plan`, …) and run them through `ctx.commands.execute` — the exact path the TUI/Web composers take — with `command/run` / `command/done` lifecycle events riding the push channel.
@@ -51,6 +52,7 @@ The correspondence matrix between plugin versions and DSH versions is as follows
 
 | Plugin version | Minimum compatible DSH version | Highest compatible DSH version |
 | --- | --- | --- |
+| 0.5.1 | 0.2.2-rc.2 | 0.2.2-rc.2 |
 | 0.5.0 | 0.2.2-rc.2 | 0.2.2-rc.2 |
 | 0.4.2 | 0.1.7-rc.1 | 0.2.2-rc.1 |
 | 0.4.1 | 0.1.7-rc.1 | 0.2.1-rc.5 |
@@ -191,7 +193,7 @@ One JSON object per line, both directions, standard JSON-RPC 2.0 envelope.
 | `config.preview` | `{ models?, presets?, overwrite? }` | Web import summary and `revision`, without writes |
 | `config.import` | `{ models?, presets?, overwrite?, revision }` | Import summary and `backupPath?`; restart the target to activate |
 | `session.list` | `{ includeStored? }` | `{ sessions: LiveSessionInfo[], storedIncluded, stored? }` |
-| `session.get` | `{ sessionId }` | live row, or a stored row with the folded title |
+| `session.get` | `{ sessionId }` | live row, or a stored row with the folded title and latest preset |
 | `session.setTitle` | `{ sessionId, title }` | `{ sessionId, title, updatedAt }` — live sessions only |
 | `session.delete` | `{ sessionId }` | `{ sessionId, archived: true }` — a session with live activity (a running turn) is refused with `-32009 session/active` (DSH ≥ 0.1.7); an unknown session with `-32004 session/not-found` |
 | `session.subscribe` | `{ sessionId?, types? }` | `{ subscribed: true, types }`; events arrive as `bridge.event` notifications |
@@ -207,6 +209,8 @@ One JSON object per line, both directions, standard JSON-RPC 2.0 envelope.
 | `command.run` | `{ sessionId, line, timeoutMs? }` | `{ commandId, kind: 'success' \| 'error', text?, sourceEventSeq? }` — `line` must start with `/`; handler-level failure arrives as `kind:'error'` with text, never as an RPC error |
 | `skill.list` | `{ sessionId? }` | `{ skills: [{ name, description, whenToUse?, source, provider }] }` — with `sessionId`, project-level skills resolve against the session header cwd, otherwise the process cwd; an empty catalog is not an error |
 | `session.exportZip` | `{ sessionId, destPath? }` | `{ path, fileName, bytes, entries }` — writes the session-log ZIP (subagent descendants included) to `destPath` (default `<tmpdir>/dsh-session-export/<fileName>`); live sessions are flushed through the durability barrier first |
+
+Session rows carry `parentSession` for the direct parent and `origin` (`"subagent"` or `null`) for the source; `capabilities.sessionOrigin` advertises this metadata. For `stored` rows, `session.list` uses `sessionQuery.inspectSession` to read the latest preset projection without resuming the Session; if that projection is unavailable, `agentPreset` is omitted rather than guessed from the creation header. `session.get` folds later `agent-preset/selected` events and returns the latest preset. `preset.current` answers `-32002` with `data.code: 'agent-preset/unavailable'` when its projection cannot be read.
 
 Subscription `types` entries match exactly, or by prefix when they end in `/` (`plan/` matches `plan/update`); `*` matches everything. The default push set is `session/title`, `permission/preset`, `sandbox/mode`, `approval/policy`, `agent-preset/selected`, `command/`, `plan/`, `todo/`.
 
@@ -248,7 +252,7 @@ The current source exposes `config.preview` / `config.import`, importing from `w
 
 ## Known limitations
 
-- **Rename and permission/preset switches require a live session.** A stored (not running) session must be resumed through ACP first; stored titles remain readable via `session.get`.
+- **Rename and permission/preset switches require a live session.** A stored (not running) session must be resumed through ACP first; stored titles and latest presets remain readable via `session.get`.
 - **"Delete" is archive**: the session disappears from every grouping surface, but its event log stays on disk. Physical deletion is not a public DSH API.
 - **Preset switching is blank-session only** (the upstream `agent-preset/locked` contract): once a turn has run, the composition is fixed.
 - **`agentPresets` is optional.** With the preset-registration rows missing (the `agent-preset-registry` row plus the declaration rows) the plugin still loads; `preset.*` then answers `service-unavailable` and the handshake reports `presets: false`.

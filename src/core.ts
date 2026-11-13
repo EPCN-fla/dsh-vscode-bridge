@@ -13,7 +13,6 @@ import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { Readable } from 'node:stream'
 import { pipeline } from 'node:stream/promises'
-import type { Context } from '@deepseek-ai/cordis'
 import type { Agent, AgentRegistry } from '@deepseek-ai/dsh-agent'
 import type { CommandRuntime } from '@deepseek-ai/dsh-commands'
 import type { PermissionPresetService } from '@deepseek-ai/dsh-permission-presets'
@@ -41,6 +40,7 @@ import {
   RPC_UNAUTHORIZED,
   type BridgeCapabilities,
   type BridgeHandshakeResult,
+  type BridgeSessionRow,
   type JsonRpcFailure,
   type JsonRpcNotification,
   type JsonRpcRequest,
@@ -74,19 +74,15 @@ export interface AgentPresetListEntry {
 }
 
 /**
- * Narrow structural slice of the host's `agentPresets` service. DSH 0.1.7
- * replaces `@deepseek-ai/dsh-agent-presets` (`AgentPresets`) with
- * `@deepseek-ai/dsh-agent-preset-registry` (`AgentPresetRegistry`)
- * (DSH-0.1.7-J1-03/J1-16), but the service key and every method the bridge
- * calls — `list`, `defaultId`, `composedPreset`, `select` — are unchanged,
- * so typing the seam itself keeps the bridge compilable against either
- * cohort. `Agent`/`Context` resolve from the installed DSH dependencies, so
- * each side of the corridor type-checks against its own host types.
+ * Narrow structural slice of the host's `agentPresets` service. The supported
+ * DSH 0.2.2 host provides this surface through `AgentPresetRegistry`; keeping
+ * the seam structural avoids a runtime dependency on that optional package.
  */
 export interface AgentPresetsSlice {
   readonly defaultId: string
   list(): Promise<readonly AgentPresetListEntry[]>
-  composedPreset(agentCtx: Context): string | undefined
+  /** Current preset from the session projection, including post-creation selections. */
+  presetForSession(session: Session): string | null
   select(agent: Agent, presetId: string): Promise<string>
 }
 
@@ -206,6 +202,7 @@ export class BridgeCore {
       workspaceGrouping: this.deps.workspaceRegistry !== undefined,
       sessionTitle: this.deps.sessionTitle !== undefined,
       sessionArchive: this.deps.workspaceRegistry !== undefined,
+      sessionOrigin: true,
       presets: this.deps.getAgentPresets() !== undefined,
       permissions: this.deps.permissionPresets !== undefined,
       commands: this.deps.getCommands() !== undefined,
@@ -483,16 +480,21 @@ export class BridgeCore {
     return {
       sessions: live,
       storedIncluded: true,
-      // Header-only rows; fold a stored title through `session.get`.
-      stored: snapshots
+      // Keep header rows cheap; sessionQuery inspects only the preset projection.
+      // A failed/unavailable projection omits the field instead of reusing the header.
+      stored: await Promise.all(snapshots
         .filter((snapshot) => !liveIds.has(String(snapshot.header.id)))
-        .map((snapshot) => ({
-          sessionId: snapshot.header.id,
-          live: false,
-          cwd: snapshot.header.cwd ?? null,
-          createdAt: snapshot.header.createdAt,
-          parentSession: snapshot.header.parentSession ?? null,
-          agentPreset: snapshot.header.agentPreset ?? null,
+        .map(async (snapshot): Promise<BridgeSessionRow> => {
+          const agentPreset = await this.storedAgentPreset(snapshot.header.id)
+          return {
+            sessionId: snapshot.header.id,
+            live: false,
+            cwd: snapshot.header.cwd ?? null,
+            createdAt: snapshot.header.createdAt,
+            parentSession: snapshot.header.parentSession ?? null,
+            origin: snapshot.header.origin ?? null,
+            ...(agentPreset === undefined ? {} : { agentPreset }),
+          }
         })),
     }
   }
@@ -525,6 +527,11 @@ export class BridgeCore {
       const { events } = await handle.read()
       const titleEvent = events.findLast((event) => event.type === 'session/title')
       const title = titleEvent === undefined ? null : (titleEvent.data as { title: string }).title
+      // The optional preset registry owns this event; its type merge is deliberately not imported.
+      const presetEvent = events.findLast((event) => (event.type as string) === 'agent-preset/selected')
+      const agentPreset = presetEvent === undefined
+        ? snapshot.header.agentPreset ?? null
+        : (presetEvent.data as { agentPreset: string }).agentPreset
       return {
         sessionId,
         live: false,
@@ -532,7 +539,8 @@ export class BridgeCore {
         cwd: snapshot.header.cwd ?? null,
         createdAt: snapshot.header.createdAt,
         parentSession: snapshot.header.parentSession ?? null,
-        agentPreset: snapshot.header.agentPreset ?? null,
+        origin: snapshot.header.origin ?? null,
+        agentPreset,
       }
     } finally {
       await handle.close()
@@ -607,11 +615,11 @@ export class BridgeCore {
   private currentPreset(params: unknown): unknown {
     const sessionId = requireString(params, 'sessionId')
     const session = this.requireLiveSession(sessionId)
-    const agent = this.deps.agents?.get(session.id)
-    const composed = agent === undefined
-      ? undefined
-      : this.deps.getAgentPresets()?.composedPreset(agent.ctx)
-    return { sessionId, preset: composed ?? session.header.agentPreset ?? null }
+    const preset = this.agentPresetOf(session)
+    if (preset === undefined) {
+      throw new BridgeRpcError(RPC_SERVICE_UNAVAILABLE, `agent preset projection is unavailable: ${sessionId}`, { code: 'agent-preset/unavailable' })
+    }
+    return { sessionId, preset }
   }
 
   private async selectPreset(params: unknown): Promise<unknown> {
@@ -887,24 +895,42 @@ export class BridgeCore {
 
   // —— helpers ——
 
-  private describeLive(session: Session): Record<string, unknown> {
+  private describeLive(session: Session): BridgeSessionRow {
+    const agentPreset = this.agentPresetOf(session)
     return {
       sessionId: session.id,
       live: true,
       cwd: session.header.cwd ?? null,
       createdAt: session.header.createdAt,
       parentSession: session.header.parentSession ?? null,
+      origin: session.header.origin ?? null,
       title: this.safeRead(() => this.deps.sessionTitle?.get(session)?.title ?? null),
       permission: this.safeRead(() => this.deps.permissionPresets?.current(session) ?? null),
-      agentPreset: this.agentPresetOf(session),
+      ...(agentPreset === undefined ? {} : { agentPreset }),
     }
   }
 
-  private agentPresetOf(session: Session): string | null {
-    const agent = this.safeRead(() => this.deps.agents?.get(session.id))
-    if (agent === undefined || agent === null) return session.header.agentPreset ?? null
-    return this.safeRead(() => this.deps.getAgentPresets()?.composedPreset(agent.ctx) ?? null)
-      ?? session.header.agentPreset ?? null
+  /** Undefined means unavailable; null is an authoritative projected value. */
+  private agentPresetOf(session: Session): string | null | undefined {
+    const presets = this.deps.getAgentPresets()
+    if (!presets) return undefined
+    try {
+      return presets.presetForSession(session)
+    } catch {
+      return undefined
+    }
+  }
+
+  /** Read a stored Session's projection without publishing or resuming it. */
+  private async storedAgentPreset(sessionId: SessionId): Promise<string | null | undefined> {
+    const query = this.deps.getSessionQuery()
+    const presets = this.deps.getAgentPresets()
+    if (!query || !presets) return undefined
+    try {
+      return await query.inspectSession(sessionId, (session: Session) => presets.presetForSession(session))
+    } catch {
+      return undefined
+    }
   }
 
   private safeRead<T>(read: () => T): T | null {

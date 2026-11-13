@@ -18,6 +18,8 @@
  *    (`session.exportZip`, lazily resolved archive module).
  * 10. Report the host DSH version (`dshVersion`) on the handshake and in the
  *    discovery file, so the extension can adapt to the host it connected to.
+ * 11. Expose parent/origin metadata so clients can distinguish subagent
+ *    sessions from ordinary forks.
  *
  * Discovery: the listener seat (host/port) plus a bearer token are written to
  * `$HOME/.dsh/vscode-bridge/<pid>.json` (mode 0600) and removed on unload;
@@ -92,7 +94,7 @@ export const Config: Schema<BridgePluginConfig> = Schema.object({
 })
 
 // Keep in sync with package.json#version (single source bump on release).
-const PLUGIN_VERSION = '0.5.0'
+const PLUGIN_VERSION = '0.5.1'
 
 /**
  * Mount the bridge. The Cordis wiring stays here; all behavior lives in

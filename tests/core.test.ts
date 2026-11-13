@@ -17,7 +17,7 @@ const silent = { info() {}, warn() {}, error() {} }
 
 // —— mocks ——
 
-function makeSession(id: string, cwd?: string, parentSession?: string, origin?: 'subagent') {
+function makeSession(id: string, cwd?: string, parentSession?: string, origin?: 'subagent', agentPreset?: string) {
   return {
     id,
     header: {
@@ -28,6 +28,7 @@ function makeSession(id: string, cwd?: string, parentSession?: string, origin?: 
       ...(cwd === undefined ? {} : { cwd }),
       ...(parentSession === undefined ? {} : { parentSession }),
       ...(origin === undefined ? {} : { origin }),
+      ...(agentPreset === undefined ? {} : { agentPreset }),
     },
   }
 }
@@ -48,11 +49,13 @@ function makeMocks() {
     exportStreams: [] as { id: string; includeDescendants: boolean; level: number }[],
   }
   const workspaces = new Map<string, { id: string; path: string; title: string; sessionIds: string[] }>()
+  const presetProjections = new Map<string, string | null>()
   // Stored log texts keyed by session id; the mock persistence/archive read them.
   const exportLogs = new Map<string, string>()
   const mocks = {
     calls,
     workspaces,
+    presetProjections,
     live,
     exportLogs,
     sessions: {
@@ -111,8 +114,9 @@ function makeMocks() {
         { id: 'standard', name: 'Standard' },
         { id: 'fast', description: 'Fast model' },
       ],
-      composedPreset: () => 'standard',
-      select: async (_agent: unknown, presetId: string) => {
+      presetForSession: (session: { id: string; header: { agentPreset?: string } }) =>
+        presetProjections.has(session.id) ? presetProjections.get(session.id)! : session.header.agentPreset ?? 'standard',
+      select: async (agent: { id: string }, presetId: string) => {
         calls.presetSelects.push(presetId)
         if (presetId === 'late') {
           const error = new Error('session has already started') as Error & { code: string; details: unknown }
@@ -120,6 +124,7 @@ function makeMocks() {
           error.details = { sessionId: 's1' }
           throw error
         }
+        presetProjections.set(agent.id, presetId)
         return presetId
       },
     },
@@ -442,6 +447,7 @@ test('handshake requires the token and reports capabilities', async () => {
       workspaceGrouping: true,
       sessionTitle: true,
       sessionArchive: true,
+      sessionOrigin: true,
       presets: true,
       permissions: true,
       commands: true,
@@ -572,9 +578,141 @@ test('session title, permission, and preset flows reach the native services', as
     assert.equal(lockedError.data.code, 'agent-preset/locked')
 
     const current = await client.request('preset.current', { sessionId: 's1' })
-    assert.equal((current.result as { preset: string }).preset, 'standard')
+    assert.equal((current.result as { preset: string }).preset, 'fast')
 
     client.close()
+  })
+})
+
+test('preset reads use the restored projection instead of the creation header', async () => {
+  await withCore((_deps, mocks) => {
+    mocks.live.set('s1', makeSession('s1', '/tmp/project', undefined, undefined, 'standard'))
+    mocks.presetProjections.set('s1', 'minimal')
+  }, async (core, mocks) => {
+    const client = new TestClient()
+    await client.connect(core.port as number)
+    try {
+      const current = await client.request('preset.current', { sessionId: 's1' })
+      assert.equal((current.result as { preset: string }).preset, 'minimal')
+      const listed = await client.request('session.list')
+      assert.equal((listed.result as { sessions: { agentPreset: string }[] }).sessions[0]?.agentPreset, 'minimal')
+      const got = await client.request('session.get', { sessionId: 's1' })
+      assert.equal((got.result as { agentPreset: string }).agentPreset, 'minimal')
+
+      // Null is the projection's authoritative value, not a missing read that
+      // should fall back to the creation header's standard preset.
+      mocks.presetProjections.set('s1', null)
+      const noPreset = await client.request('preset.current', { sessionId: 's1' })
+      assert.equal((noPreset.result as { preset: string | null }).preset, null)
+      const gotNull = await client.request('session.get', { sessionId: 's1' })
+      assert.equal((gotNull.result as { agentPreset: string | null }).agentPreset, null)
+    } finally { client.close() }
+  })
+})
+
+test('stored preset reads use the projection and fold committed selections', async () => {
+  await withCore((deps, mocks) => {
+    const storedSession = makeSession('stored-preset', '/tmp/project', undefined, undefined, 'standard')
+    const snapshot = { header: storedSession.header }
+    mocks.presetProjections.set('stored-preset', 'fast')
+    ;(mocks.sessionQuery as unknown as Record<string, unknown>).inspectSession = async (_id: string, read: (session: unknown) => unknown) => read(storedSession)
+    ;(deps as unknown as Record<string, unknown>).sessionPersistence = {
+      list: async () => [snapshot],
+      stat: async (id: string) => id === 'stored-preset' ? snapshot : undefined,
+      open: async () => ({
+        read: async () => ({
+          events: [
+            { type: 'agent-preset/selected', data: { agentPreset: 'minimal' } },
+            { type: 'agent-preset/selected', data: { agentPreset: 'fast' } },
+          ],
+        }),
+        close: async () => {},
+      }),
+    }
+  }, async (core, mocks) => {
+    const client = new TestClient()
+    await client.connect(core.port as number)
+    try {
+      const listed = await client.request('session.list', { includeStored: true })
+      const stored = (listed.result as { stored: { agentPreset?: string | null }[] }).stored
+      assert.equal(stored[0]?.agentPreset, 'fast')
+      const got = await client.request('session.get', { sessionId: 'stored-preset' })
+      assert.equal((got.result as { agentPreset: string }).agentPreset, 'fast')
+
+      // A stored null is authoritative too, never a signal to reuse the header.
+      mocks.presetProjections.set('stored-preset', null)
+      const listedNull = await client.request('session.list', { includeStored: true })
+      assert.equal((listedNull.result as { stored: { agentPreset?: string | null }[] }).stored[0]?.agentPreset, null)
+
+      // A failing projection degrades only this field, not the whole list.
+      ;(mocks.sessionQuery as unknown as Record<string, unknown>).inspectSession = async () => { throw new Error('projection unavailable') }
+      const degraded = await client.request('session.list', { includeStored: true })
+      const degradedRow = (degraded.result as { stored: Record<string, unknown>[] }).stored[0]!
+      assert.ok(!('agentPreset' in degradedRow))
+      assert.equal(degradedRow.sessionId, 'stored-preset')
+    } finally { client.close() }
+  })
+})
+
+test('a broken preset projection omits list fields and rejects preset.current honestly', async () => {
+  await withCore((_deps, mocks) => {
+    mocks.live.set('s1', makeSession('s1', '/tmp/project', undefined, undefined, 'standard'))
+    mocks.agentPresets.presetForSession = () => { throw new Error('projection unavailable') }
+  }, async core => {
+    const client = new TestClient()
+    await client.connect(core.port as number)
+    try {
+      const listed = await client.request('session.list')
+      const row = (listed.result as { sessions: Record<string, unknown>[] }).sessions[0]!
+      assert.ok(!('agentPreset' in row))
+      const got = await client.request('session.get', { sessionId: 's1' })
+      assert.ok(!('agentPreset' in (got.result as Record<string, unknown>)))
+      const current = await client.request('preset.current', { sessionId: 's1' })
+      const error = current.error as { code: number; data: { code: string } }
+      assert.equal(error.code, -32002)
+      assert.equal(error.data.code, 'agent-preset/unavailable')
+    } finally { client.close() }
+  })
+})
+
+test('session metadata distinguishes subagents from ordinary forks', async () => {
+  await withCore((deps, mocks) => {
+    mocks.live.set('root', makeSession('root', '/tmp/project'))
+    mocks.live.set('live-fork', makeSession('live-fork', '/tmp/project', 'root'))
+    mocks.live.set('live-child', makeSession('live-child', '/tmp/project', 'root', 'subagent'))
+    const stored = [
+      { header: makeSession('stored-fork', '/tmp/project', 'root').header },
+      { header: makeSession('stored-child', '/tmp/project', 'root', 'subagent').header },
+    ]
+    ;(deps as unknown as Record<string, unknown>).sessionPersistence = {
+      list: async () => stored,
+      stat: async (id: string) => stored.find(row => row.header.id === id),
+      open: async () => ({ read: async () => ({ events: [] }), close: async () => {} }),
+    }
+  }, async core => {
+    const client = new TestClient()
+    await client.connect(core.port as number)
+    try {
+      const listed = await client.request('session.list', { includeStored: true })
+      const result = listed.result as {
+        sessions: { sessionId: string; parentSession: string | null; origin: string | null }[]
+        stored: { sessionId: string; parentSession: string | null; origin: string | null }[]
+      }
+      const rows = [...result.sessions, ...result.stored]
+      assert.deepEqual(
+        rows.map(row => [row.sessionId, row.parentSession, row.origin]),
+        [
+          ['root', null, null],
+          ['live-fork', 'root', null],
+          ['live-child', 'root', 'subagent'],
+          ['stored-fork', 'root', null],
+          ['stored-child', 'root', 'subagent'],
+        ],
+      )
+      const got = await client.request('session.get', { sessionId: 'stored-child' })
+      assert.equal((got.result as { origin: string }).origin, 'subagent')
+      assert.equal((got.result as { parentSession: string }).parentSession, 'root')
+    } finally { client.close() }
   })
 })
 
@@ -800,6 +938,7 @@ test('degraded services report capabilities honestly', async () => {
       workspaceGrouping: false,
       sessionTitle: false,
       sessionArchive: false,
+      sessionOrigin: true,
       presets: false,
       permissions: false,
       commands: false,
@@ -828,7 +967,7 @@ test('preset.list maps the declarative (DSH >= 0.1.7) roster', async () => {
         { id: 'standard', name: 'Standard' },
         { id: 'ptc', description: 'PTC preset', broken: 'mount failed' },
       ],
-      composedPreset: () => 'standard',
+      presetForSession: () => 'standard',
       select: async (_agent: unknown, presetId: string) => presetId,
     })
   }, async (core) => {

@@ -16,6 +16,7 @@ ACP 是纯自动化接口，标题、删除、工作区分组、预设、权限�
 
 - **工作区分组修复**：在 `session/created` 时把每个新会话 attach 到其 cwd 所属的工作区（不存在则创建）——「未分组」不再增长。
 - **原生会话标题**：读取任意会话折叠后的标题；通过 `sessionTitle.rename` 重命名任意活会话。
+- **子代理会话识别**：`session.list` 与 `session.get` 返回 `parentSession` 和 `origin`；`origin: "subagent"` 明确标识子代理，普通分叉即使带父会话 id 也返回 `origin: null`。
 - **会话删除**：经 registry 级归档集合实现产品级删除（`workspaceRegistry.archiveSession`）。
 - **Agent 预设**：列出预设名册（含生效的默认项）、读取会话当前预设、切换空白会话（会话开跑后返回 `agent-preset/locked`——上游契约）。
 - **权限预设**：查询选项列表与会话当前预设并切换——sandbox 模式与 approval 策略立即生效。
@@ -51,6 +52,7 @@ flowchart LR
 
 | 插件版本 | 最低适配的 DSH 版本 | 最高适配的 DSH 版本 |
 | --- | --- | --- |
+| 0.5.1 | 0.2.2-rc.2 | 0.2.2-rc.2 |
 | 0.5.0 | 0.2.2-rc.2 | 0.2.2-rc.2 |
 | 0.4.2 | 0.1.7-rc.1 | 0.2.2-rc.1 |
 | 0.4.1 | 0.1.7-rc.1 | 0.2.1-rc.5 |
@@ -187,7 +189,7 @@ dsh plugin --profile acp-vscode add /absolute/path/to/dsh-vscode-bridge
 | `config.preview` | `{ models?, presets?, overwrite? }` | Web 导入摘要与 `revision`（不写文件） |
 | `config.import` | `{ models?, presets?, overwrite?, revision }` | 导入摘要与 `backupPath?`；重启目标后生效 |
 | `session.list` | `{ includeStored? }` | `{ sessions: LiveSessionInfo[], storedIncluded, stored? }` |
-| `session.get` | `{ sessionId }` | 活会话行，或带折叠标题的存储态行 |
+| `session.get` | `{ sessionId }` | 活会话行，或带折叠标题与最新预设的存储态行 |
 | `session.setTitle` | `{ sessionId, title }` | `{ sessionId, title, updatedAt }`——仅限活会话 |
 | `session.delete` | `{ sessionId }` | `{ sessionId, archived: true }`；有活动（运行中 turn）的会话以 `-32009 session/active` 拒绝（DSH ≥ 0.1.7），未知会话以 `-32004 session/not-found` 拒绝 |
 | `session.subscribe` | `{ sessionId?, types? }` | `{ subscribed: true, types }`；事件以 `bridge.event` 通知到达 |
@@ -203,6 +205,8 @@ dsh plugin --profile acp-vscode add /absolute/path/to/dsh-vscode-bridge
 | `command.run` | `{ sessionId, line, timeoutMs? }` | `{ commandId, kind: 'success' \| 'error', text?, sourceEventSeq? }`——`line` 须以 `/` 开头；处理器级失败以 `kind:'error'+text` 返回，不作 RPC 错误 |
 | `skill.list` | `{ sessionId? }` | `{ skills: [{ name, description, whenToUse?, source, provider }] }`——传 `sessionId` 按会话头 cwd 解析项目级技能，否则用进程 cwd；无技能返回空数组 |
 | `session.exportZip` | `{ sessionId, destPath? }` | `{ path, fileName, bytes, entries }`——含子代理后代的会话日志 ZIP 落盘到 `destPath`（缺省 `<tmpdir>/dsh-session-export/<fileName>`）；活会话先做持久化屏障 |
+
+会话行的 `parentSession` 与 `origin` 分别表示直接父会话和来源；`origin` 为 `"subagent"` 或 `null`，`capabilities.sessionOrigin` 标识此能力。`session.list` 的 `stored` 行通过 `sessionQuery.inspectSession` 在不恢复会话的情况下读取最新预设 projection；projection 不可用时省略 `agentPreset`，不再根据创建时 header 猜测。`session.get` 会折叠后续 `agent-preset/selected` 事件，返回最新预设。`preset.current` 在 projection 不可读时返回 `-32002`，并携带 `data.code: 'agent-preset/unavailable'`。
 
 订阅的 `types` 条目默认精确匹配；以 `/` 结尾时按前缀匹配（`plan/` 匹配 `plan/update`）；`*` 匹配全部。默认推送集合：`session/title`、`permission/preset`、`sandbox/mode`、`approval/policy`、`agent-preset/selected`、`command/`、`plan/`、`todo/`。
 
@@ -244,7 +248,7 @@ dsh plugin --profile acp-vscode add /absolute/path/to/dsh-vscode-bridge
 
 ## 已知限制
 
-- **重命名与权限/预设切换要求活会话**。存储态（未运行）会话需先经 ACP resume；存储态标题仍可通过 `session.get` 读取。
+- **重命名与权限/预设切换要求活会话**。存储态（未运行）会话需先经 ACP resume；存储态标题与最新预设仍可通过 `session.get` 读取。
 - **「删除」即归档**：会话从所有分组界面消失，但其事件日志仍保留在磁盘上。物理删除不是 DSH 的公开 API。
 - **预设切换仅限空白会话**（上游 `agent-preset/locked` 契约）：跑过一轮后组合即固定。
 - **`agentPresets` 是可选服务**。缺少预设注册行时（`agent-preset-registry` + 声明行）插件照常加载；此时 `preset.*` 返回 `service-unavailable`，握手如实报告 `presets: false`。
