@@ -18,6 +18,8 @@
  *    (`session.exportZip`, lazily resolved archive module).
  * 10. Report the host DSH version (`dshVersion`) on the handshake and in the
  *    discovery file, so the extension can adapt to the host it connected to.
+ * 11. Expose parent/origin metadata so clients can distinguish subagent
+ *    sessions from ordinary forks.
  *
  * Discovery: the listener seat (host/port) plus a bearer token are written to
  * `$HOME/.dsh/vscode-bridge/<pid>.json` (mode 0600) and removed on unload;
