@@ -610,6 +610,49 @@ test('preset reads use the restored projection instead of the creation header', 
   })
 })
 
+test('stored preset reads fold committed selections after the creation header', async () => {
+  await withCore((deps) => {
+    const snapshot = { header: makeSession('stored-preset', '/tmp/project', undefined, undefined, 'standard').header }
+    ;(deps as unknown as Record<string, unknown>).sessionPersistence = {
+      stat: async (id: string) => id === 'stored-preset' ? snapshot : undefined,
+      open: async () => ({
+        read: async () => ({
+          events: [
+            { type: 'agent-preset/selected', data: { agentPreset: 'minimal' } },
+            { type: 'agent-preset/selected', data: { agentPreset: 'fast' } },
+          ],
+        }),
+        close: async () => {},
+      }),
+    }
+  }, async core => {
+    const client = new TestClient()
+    await client.connect(core.port as number)
+    try {
+      const got = await client.request('session.get', { sessionId: 'stored-preset' })
+      assert.equal((got.result as { agentPreset: string }).agentPreset, 'fast')
+    } finally { client.close() }
+  })
+})
+
+test('a broken preset projection degrades one field instead of failing session reads', async () => {
+  await withCore((_deps, mocks) => {
+    mocks.live.set('s1', makeSession('s1', '/tmp/project', undefined, undefined, 'standard'))
+    mocks.agentPresets.presetForSession = () => { throw new Error('projection unavailable') }
+  }, async core => {
+    const client = new TestClient()
+    await client.connect(core.port as number)
+    try {
+      const listed = await client.request('session.list')
+      assert.equal((listed.result as { sessions: { agentPreset: string | null }[] }).sessions[0]?.agentPreset, null)
+      const got = await client.request('session.get', { sessionId: 's1' })
+      assert.equal((got.result as { agentPreset: string | null }).agentPreset, null)
+      const current = await client.request('preset.current', { sessionId: 's1' })
+      assert.equal((current.result as { preset: string | null }).preset, null)
+    } finally { client.close() }
+  })
+})
+
 test('session metadata distinguishes subagents from ordinary forks', async () => {
   await withCore((deps, mocks) => {
     mocks.live.set('root', makeSession('root', '/tmp/project'))

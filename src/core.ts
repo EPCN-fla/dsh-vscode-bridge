@@ -13,7 +13,6 @@ import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { Readable } from 'node:stream'
 import { pipeline } from 'node:stream/promises'
-import type { Context } from '@deepseek-ai/cordis'
 import type { Agent, AgentRegistry } from '@deepseek-ai/dsh-agent'
 import type { CommandRuntime } from '@deepseek-ai/dsh-commands'
 import type { PermissionPresetService } from '@deepseek-ai/dsh-permission-presets'
@@ -74,14 +73,9 @@ export interface AgentPresetListEntry {
 }
 
 /**
- * Narrow structural slice of the host's `agentPresets` service. DSH 0.1.7
- * replaces `@deepseek-ai/dsh-agent-presets` (`AgentPresets`) with
- * `@deepseek-ai/dsh-agent-preset-registry` (`AgentPresetRegistry`)
- * (DSH-0.1.7-J1-03/J1-16), but the service key and every method the bridge
- * calls — `list`, `defaultId`, `presetForSession`, `select` — are unchanged,
- * so typing the seam itself keeps the bridge compilable against either
- * cohort. `Agent`/`Context` resolve from the installed DSH dependencies, so
- * each side of the corridor type-checks against its own host types.
+ * Narrow structural slice of the host's `agentPresets` service. The supported
+ * DSH 0.2.2 host provides this surface through `AgentPresetRegistry`; keeping
+ * the seam structural avoids a runtime dependency on that optional package.
  */
 export interface AgentPresetsSlice {
   readonly defaultId: string
@@ -485,7 +479,7 @@ export class BridgeCore {
     return {
       sessions: live,
       storedIncluded: true,
-      // Header-only rows; fold a stored title through `session.get`.
+      // Header-only rows; fold stored titles and later preset selections through `session.get`.
       stored: snapshots
         .filter((snapshot) => !liveIds.has(String(snapshot.header.id)))
         .map((snapshot) => ({
@@ -528,6 +522,11 @@ export class BridgeCore {
       const { events } = await handle.read()
       const titleEvent = events.findLast((event) => event.type === 'session/title')
       const title = titleEvent === undefined ? null : (titleEvent.data as { title: string }).title
+      // The optional preset registry owns this event; its type merge is deliberately not imported.
+      const presetEvent = events.findLast((event) => (event.type as string) === 'agent-preset/selected')
+      const agentPreset = presetEvent === undefined
+        ? snapshot.header.agentPreset ?? null
+        : (presetEvent.data as { agentPreset: string }).agentPreset
       return {
         sessionId,
         live: false,
@@ -536,7 +535,7 @@ export class BridgeCore {
         createdAt: snapshot.header.createdAt,
         parentSession: snapshot.header.parentSession ?? null,
         origin: snapshot.header.origin ?? null,
-        agentPreset: snapshot.header.agentPreset ?? null,
+        agentPreset,
       }
     } finally {
       await handle.close()
@@ -902,11 +901,12 @@ export class BridgeCore {
   }
 
   private agentPresetOf(session: Session): string | null {
-    const presets = this.deps.getAgentPresets()
+    const presets = this.safeRead(() => this.deps.getAgentPresets())
+    if (!presets) return session.header.agentPreset ?? null
     // The header is a creation-time fact. After a blank-session preset switch,
     // only the projection includes the committed agent-preset/selected event.
     // A projected null is authoritative too: do not fall back to the header.
-    return presets ? presets.presetForSession(session) : session.header.agentPreset ?? null
+    return this.safeRead(() => presets.presetForSession(session))
   }
 
   private safeRead<T>(read: () => T): T | null {
