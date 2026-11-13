@@ -105,6 +105,20 @@ export interface BridgeCapabilities {
   readonly configSync?: boolean
 }
 
+/** Session row returned by session.list/get. Optional agentPreset is omitted
+ * when its projection cannot be read; null is an authoritative projected value. */
+export interface BridgeSessionRow {
+  readonly sessionId: string
+  readonly live: boolean
+  readonly cwd: string | null
+  readonly createdAt: number
+  readonly parentSession: string | null
+  readonly origin: 'subagent' | null
+  readonly title?: string | null
+  readonly permission?: string | null
+  readonly agentPreset?: string | null
+}
+
 /** Result of `bridge.handshake`. */
 export interface BridgeHandshakeResult {
   readonly protocolVersion: number

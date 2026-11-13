@@ -610,10 +610,14 @@ test('preset reads use the restored projection instead of the creation header', 
   })
 })
 
-test('stored preset reads fold committed selections after the creation header', async () => {
-  await withCore((deps) => {
-    const snapshot = { header: makeSession('stored-preset', '/tmp/project', undefined, undefined, 'standard').header }
+test('stored preset reads use the projection and fold committed selections', async () => {
+  await withCore((deps, mocks) => {
+    const storedSession = makeSession('stored-preset', '/tmp/project', undefined, undefined, 'standard')
+    const snapshot = { header: storedSession.header }
+    mocks.presetProjections.set('stored-preset', 'fast')
+    ;(mocks.sessionQuery as unknown as Record<string, unknown>).inspectSession = async (_id: string, read: (session: unknown) => unknown) => read(storedSession)
     ;(deps as unknown as Record<string, unknown>).sessionPersistence = {
+      list: async () => [snapshot],
       stat: async (id: string) => id === 'stored-preset' ? snapshot : undefined,
       open: async () => ({
         read: async () => ({
@@ -625,17 +629,32 @@ test('stored preset reads fold committed selections after the creation header', 
         close: async () => {},
       }),
     }
-  }, async core => {
+  }, async (core, mocks) => {
     const client = new TestClient()
     await client.connect(core.port as number)
     try {
+      const listed = await client.request('session.list', { includeStored: true })
+      const stored = (listed.result as { stored: { agentPreset?: string | null }[] }).stored
+      assert.equal(stored[0]?.agentPreset, 'fast')
       const got = await client.request('session.get', { sessionId: 'stored-preset' })
       assert.equal((got.result as { agentPreset: string }).agentPreset, 'fast')
+
+      // A stored null is authoritative too, never a signal to reuse the header.
+      mocks.presetProjections.set('stored-preset', null)
+      const listedNull = await client.request('session.list', { includeStored: true })
+      assert.equal((listedNull.result as { stored: { agentPreset?: string | null }[] }).stored[0]?.agentPreset, null)
+
+      // A failing projection degrades only this field, not the whole list.
+      ;(mocks.sessionQuery as unknown as Record<string, unknown>).inspectSession = async () => { throw new Error('projection unavailable') }
+      const degraded = await client.request('session.list', { includeStored: true })
+      const degradedRow = (degraded.result as { stored: Record<string, unknown>[] }).stored[0]!
+      assert.ok(!('agentPreset' in degradedRow))
+      assert.equal(degradedRow.sessionId, 'stored-preset')
     } finally { client.close() }
   })
 })
 
-test('a broken preset projection degrades one field instead of failing session reads', async () => {
+test('a broken preset projection omits list fields and rejects preset.current honestly', async () => {
   await withCore((_deps, mocks) => {
     mocks.live.set('s1', makeSession('s1', '/tmp/project', undefined, undefined, 'standard'))
     mocks.agentPresets.presetForSession = () => { throw new Error('projection unavailable') }
@@ -644,11 +663,14 @@ test('a broken preset projection degrades one field instead of failing session r
     await client.connect(core.port as number)
     try {
       const listed = await client.request('session.list')
-      assert.equal((listed.result as { sessions: { agentPreset: string | null }[] }).sessions[0]?.agentPreset, null)
+      const row = (listed.result as { sessions: Record<string, unknown>[] }).sessions[0]!
+      assert.ok(!('agentPreset' in row))
       const got = await client.request('session.get', { sessionId: 's1' })
-      assert.equal((got.result as { agentPreset: string | null }).agentPreset, null)
+      assert.ok(!('agentPreset' in (got.result as Record<string, unknown>)))
       const current = await client.request('preset.current', { sessionId: 's1' })
-      assert.equal((current.result as { preset: string | null }).preset, null)
+      const error = current.error as { code: number; data: { code: string } }
+      assert.equal(error.code, -32002)
+      assert.equal(error.data.code, 'agent-preset/unavailable')
     } finally { client.close() }
   })
 })

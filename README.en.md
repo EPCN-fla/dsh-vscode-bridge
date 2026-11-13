@@ -18,7 +18,7 @@ This plugin closes that gap from inside the harness process: a loopback TCP list
 - **Native session titles**: read the folded title of any session, rename any live session through `sessionTitle.rename`.
 - **Subagent session identity**: `session.list` and `session.get` return `parentSession` and `origin`; `origin: "subagent"` identifies a subagent, while an ordinary fork returns `origin: null` even when it retains a parent session id.
 - **Session delete**: product-level deletion through the registry-wide archive set (`workspaceRegistry.archiveSession`).
-- **Agent presets**: list the roster with the effective default, read a session's composed preset, switch blank sessions (`agent-preset/locked` once a turn has run — upstream contract).
+- **Agent presets**: list the roster with the effective default, read the current preset projection, switch blank sessions (`agent-preset/locked` once a turn has run — upstream contract).
 - **Permission presets**: query the option list plus a session's current preset, and switch it — sandbox mode and approval policy follow immediately.
 - **Event push**: subscribed clients receive `bridge.event` notifications for plan/todo/title/permission/command-lifecycle session events, with exact or prefix (`plan/`, `command/`) type filters.
 - **Native slash commands**: list the commands effective for a session (`/compact`, `/plan`, …) and run them through `ctx.commands.execute` — the exact path the TUI/Web composers take — with `command/run` / `command/done` lifecycle events riding the push channel.
@@ -209,7 +209,7 @@ One JSON object per line, both directions, standard JSON-RPC 2.0 envelope.
 | `skill.list` | `{ sessionId? }` | `{ skills: [{ name, description, whenToUse?, source, provider }] }` — with `sessionId`, project-level skills resolve against the session header cwd, otherwise the process cwd; an empty catalog is not an error |
 | `session.exportZip` | `{ sessionId, destPath? }` | `{ path, fileName, bytes, entries }` — writes the session-log ZIP (subagent descendants included) to `destPath` (default `<tmpdir>/dsh-session-export/<fileName>`); live sessions are flushed through the durability barrier first |
 
-Session rows carry `parentSession` for the direct parent and `origin` (`"subagent"` or `null`) for the source; `capabilities.sessionOrigin` advertises this metadata. The `stored` rows from `session.list` are header-only snapshots, so their `agentPreset` is the creation-time value. `session.get` folds later `agent-preset/selected` events and returns the latest preset.
+Session rows carry `parentSession` for the direct parent and `origin` (`"subagent"` or `null`) for the source; `capabilities.sessionOrigin` advertises this metadata. For `stored` rows, `session.list` uses `sessionQuery.inspectSession` to read the latest preset projection without resuming the Session; if that projection is unavailable, `agentPreset` is omitted rather than guessed from the creation header. `session.get` folds later `agent-preset/selected` events and returns the latest preset. `preset.current` answers `-32002` with `data.code: 'agent-preset/unavailable'` when its projection cannot be read.
 
 Subscription `types` entries match exactly, or by prefix when they end in `/` (`plan/` matches `plan/update`); `*` matches everything. The default push set is `session/title`, `permission/preset`, `sandbox/mode`, `approval/policy`, `agent-preset/selected`, `command/`, `plan/`, `todo/`.
 

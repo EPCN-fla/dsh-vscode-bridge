@@ -40,6 +40,7 @@ import {
   RPC_UNAUTHORIZED,
   type BridgeCapabilities,
   type BridgeHandshakeResult,
+  type BridgeSessionRow,
   type JsonRpcFailure,
   type JsonRpcNotification,
   type JsonRpcRequest,
@@ -479,17 +480,21 @@ export class BridgeCore {
     return {
       sessions: live,
       storedIncluded: true,
-      // Header-only rows; fold stored titles and later preset selections through `session.get`.
-      stored: snapshots
+      // Keep header rows cheap; sessionQuery inspects only the preset projection.
+      // A failed/unavailable projection omits the field instead of reusing the header.
+      stored: await Promise.all(snapshots
         .filter((snapshot) => !liveIds.has(String(snapshot.header.id)))
-        .map((snapshot) => ({
-          sessionId: snapshot.header.id,
-          live: false,
-          cwd: snapshot.header.cwd ?? null,
-          createdAt: snapshot.header.createdAt,
-          parentSession: snapshot.header.parentSession ?? null,
-          origin: snapshot.header.origin ?? null,
-          agentPreset: snapshot.header.agentPreset ?? null,
+        .map(async (snapshot): Promise<BridgeSessionRow> => {
+          const agentPreset = await this.storedAgentPreset(snapshot.header.id)
+          return {
+            sessionId: snapshot.header.id,
+            live: false,
+            cwd: snapshot.header.cwd ?? null,
+            createdAt: snapshot.header.createdAt,
+            parentSession: snapshot.header.parentSession ?? null,
+            origin: snapshot.header.origin ?? null,
+            ...(agentPreset === undefined ? {} : { agentPreset }),
+          }
         })),
     }
   }
@@ -610,7 +615,11 @@ export class BridgeCore {
   private currentPreset(params: unknown): unknown {
     const sessionId = requireString(params, 'sessionId')
     const session = this.requireLiveSession(sessionId)
-    return { sessionId, preset: this.agentPresetOf(session) }
+    const preset = this.agentPresetOf(session)
+    if (preset === undefined) {
+      throw new BridgeRpcError(RPC_SERVICE_UNAVAILABLE, `agent preset projection is unavailable: ${sessionId}`, { code: 'agent-preset/unavailable' })
+    }
+    return { sessionId, preset }
   }
 
   private async selectPreset(params: unknown): Promise<unknown> {
@@ -886,7 +895,8 @@ export class BridgeCore {
 
   // —— helpers ——
 
-  private describeLive(session: Session): Record<string, unknown> {
+  private describeLive(session: Session): BridgeSessionRow {
+    const agentPreset = this.agentPresetOf(session)
     return {
       sessionId: session.id,
       live: true,
@@ -896,17 +906,31 @@ export class BridgeCore {
       origin: session.header.origin ?? null,
       title: this.safeRead(() => this.deps.sessionTitle?.get(session)?.title ?? null),
       permission: this.safeRead(() => this.deps.permissionPresets?.current(session) ?? null),
-      agentPreset: this.agentPresetOf(session),
+      ...(agentPreset === undefined ? {} : { agentPreset }),
     }
   }
 
-  private agentPresetOf(session: Session): string | null {
-    const presets = this.safeRead(() => this.deps.getAgentPresets())
-    if (!presets) return session.header.agentPreset ?? null
-    // The header is a creation-time fact. After a blank-session preset switch,
-    // only the projection includes the committed agent-preset/selected event.
-    // A projected null is authoritative too: do not fall back to the header.
-    return this.safeRead(() => presets.presetForSession(session))
+  /** Undefined means unavailable; null is an authoritative projected value. */
+  private agentPresetOf(session: Session): string | null | undefined {
+    const presets = this.deps.getAgentPresets()
+    if (!presets) return undefined
+    try {
+      return presets.presetForSession(session)
+    } catch {
+      return undefined
+    }
+  }
+
+  /** Read a stored Session's projection without publishing or resuming it. */
+  private async storedAgentPreset(sessionId: SessionId): Promise<string | null | undefined> {
+    const query = this.deps.getSessionQuery()
+    const presets = this.deps.getAgentPresets()
+    if (!query || !presets) return undefined
+    try {
+      return await query.inspectSession(sessionId, (session: Session) => presets.presetForSession(session))
+    } catch {
+      return undefined
+    }
   }
 
   private safeRead<T>(read: () => T): T | null {
