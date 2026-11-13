@@ -87,6 +87,8 @@ export interface BridgeCapabilities {
   readonly sessionTitle: boolean
   /** Session archive ("delete") via `workspaceRegistry.archiveSession`. */
   readonly sessionArchive: boolean
+  /** Origin/parent metadata distinguishes subagents from resumable ordinary forks. */
+  readonly sessionOrigin: boolean
   /** Agent preset roster and per-session switching via `agentPresets`. */
   readonly presets: boolean
   /** Permission preset query/switch via `permissionPresets`. */

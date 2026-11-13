@@ -25,6 +25,7 @@ function payload(port: number, directories: readonly string[] = []): DiscoveryFi
       workspaceGrouping: true,
       sessionTitle: true,
       sessionArchive: true,
+      sessionOrigin: true,
       presets: true,
       permissions: true,
       commands: true,

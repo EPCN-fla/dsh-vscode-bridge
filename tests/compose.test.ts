@@ -177,6 +177,7 @@ test('the function plugin loads, serves, and unloads cleanly in a real Cordis co
         cwd: workspace,
         createdAt: 1,
         parentSession: null,
+        origin: null,
         title: null,
         permission: 'workspace-write',
         agentPreset: 'standard',

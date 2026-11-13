@@ -207,6 +207,7 @@ export class BridgeCore {
       workspaceGrouping: this.deps.workspaceRegistry !== undefined,
       sessionTitle: this.deps.sessionTitle !== undefined,
       sessionArchive: this.deps.workspaceRegistry !== undefined,
+      sessionOrigin: true,
       presets: this.deps.getAgentPresets() !== undefined,
       permissions: this.deps.permissionPresets !== undefined,
       commands: this.deps.getCommands() !== undefined,
@@ -493,6 +494,7 @@ export class BridgeCore {
           cwd: snapshot.header.cwd ?? null,
           createdAt: snapshot.header.createdAt,
           parentSession: snapshot.header.parentSession ?? null,
+          origin: snapshot.header.origin ?? null,
           agentPreset: snapshot.header.agentPreset ?? null,
         })),
     }
@@ -533,6 +535,7 @@ export class BridgeCore {
         cwd: snapshot.header.cwd ?? null,
         createdAt: snapshot.header.createdAt,
         parentSession: snapshot.header.parentSession ?? null,
+        origin: snapshot.header.origin ?? null,
         agentPreset: snapshot.header.agentPreset ?? null,
       }
     } finally {
@@ -891,6 +894,7 @@ export class BridgeCore {
       cwd: session.header.cwd ?? null,
       createdAt: session.header.createdAt,
       parentSession: session.header.parentSession ?? null,
+      origin: session.header.origin ?? null,
       title: this.safeRead(() => this.deps.sessionTitle?.get(session)?.title ?? null),
       permission: this.safeRead(() => this.deps.permissionPresets?.current(session) ?? null),
       agentPreset: this.agentPresetOf(session),

@@ -447,6 +447,7 @@ test('handshake requires the token and reports capabilities', async () => {
       workspaceGrouping: true,
       sessionTitle: true,
       sessionArchive: true,
+      sessionOrigin: true,
       presets: true,
       permissions: true,
       commands: true,
@@ -605,6 +606,47 @@ test('preset reads use the restored projection instead of the creation header', 
       assert.equal((noPreset.result as { preset: string | null }).preset, null)
       const gotNull = await client.request('session.get', { sessionId: 's1' })
       assert.equal((gotNull.result as { agentPreset: string | null }).agentPreset, null)
+    } finally { client.close() }
+  })
+})
+
+test('session metadata distinguishes subagents from ordinary forks', async () => {
+  await withCore((deps, mocks) => {
+    mocks.live.set('root', makeSession('root', '/tmp/project'))
+    mocks.live.set('live-fork', makeSession('live-fork', '/tmp/project', 'root'))
+    mocks.live.set('live-child', makeSession('live-child', '/tmp/project', 'root', 'subagent'))
+    const stored = [
+      { header: makeSession('stored-fork', '/tmp/project', 'root').header },
+      { header: makeSession('stored-child', '/tmp/project', 'root', 'subagent').header },
+    ]
+    ;(deps as unknown as Record<string, unknown>).sessionPersistence = {
+      list: async () => stored,
+      stat: async (id: string) => stored.find(row => row.header.id === id),
+      open: async () => ({ read: async () => ({ events: [] }), close: async () => {} }),
+    }
+  }, async core => {
+    const client = new TestClient()
+    await client.connect(core.port as number)
+    try {
+      const listed = await client.request('session.list', { includeStored: true })
+      const result = listed.result as {
+        sessions: { sessionId: string; parentSession: string | null; origin: string | null }[]
+        stored: { sessionId: string; parentSession: string | null; origin: string | null }[]
+      }
+      const rows = [...result.sessions, ...result.stored]
+      assert.deepEqual(
+        rows.map(row => [row.sessionId, row.parentSession, row.origin]),
+        [
+          ['root', null, null],
+          ['live-fork', 'root', null],
+          ['live-child', 'root', 'subagent'],
+          ['stored-fork', 'root', null],
+          ['stored-child', 'root', 'subagent'],
+        ],
+      )
+      const got = await client.request('session.get', { sessionId: 'stored-child' })
+      assert.equal((got.result as { origin: string }).origin, 'subagent')
+      assert.equal((got.result as { parentSession: string }).parentSession, 'root')
     } finally { client.close() }
   })
 })
@@ -831,6 +873,7 @@ test('degraded services report capabilities honestly', async () => {
       workspaceGrouping: false,
       sessionTitle: false,
       sessionArchive: false,
+      sessionOrigin: true,
       presets: false,
       permissions: false,
       commands: false,
