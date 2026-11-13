@@ -84,7 +84,7 @@ test('the function plugin loads, serves, and unloads cleanly in a real Cordis co
       { id: 'standard', name: 'Standard' },
       { id: 'minimal', description: 'Minimal toolset' },
     ],
-    composedPreset: () => 'standard',
+    presetForSession: () => 'standard',
     select: async (_agent: unknown, presetId: string) => presetId,
   })
 

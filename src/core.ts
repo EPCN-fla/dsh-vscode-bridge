@@ -78,7 +78,7 @@ export interface AgentPresetListEntry {
  * replaces `@deepseek-ai/dsh-agent-presets` (`AgentPresets`) with
  * `@deepseek-ai/dsh-agent-preset-registry` (`AgentPresetRegistry`)
  * (DSH-0.1.7-J1-03/J1-16), but the service key and every method the bridge
- * calls — `list`, `defaultId`, `composedPreset`, `select` — are unchanged,
+ * calls — `list`, `defaultId`, `presetForSession`, `select` — are unchanged,
  * so typing the seam itself keeps the bridge compilable against either
  * cohort. `Agent`/`Context` resolve from the installed DSH dependencies, so
  * each side of the corridor type-checks against its own host types.
@@ -86,7 +86,8 @@ export interface AgentPresetListEntry {
 export interface AgentPresetsSlice {
   readonly defaultId: string
   list(): Promise<readonly AgentPresetListEntry[]>
-  composedPreset(agentCtx: Context): string | undefined
+  /** Current preset from the session projection, including post-creation selections. */
+  presetForSession(session: Session): string | null
   select(agent: Agent, presetId: string): Promise<string>
 }
 
@@ -607,11 +608,7 @@ export class BridgeCore {
   private currentPreset(params: unknown): unknown {
     const sessionId = requireString(params, 'sessionId')
     const session = this.requireLiveSession(sessionId)
-    const agent = this.deps.agents?.get(session.id)
-    const composed = agent === undefined
-      ? undefined
-      : this.deps.getAgentPresets()?.composedPreset(agent.ctx)
-    return { sessionId, preset: composed ?? session.header.agentPreset ?? null }
+    return { sessionId, preset: this.agentPresetOf(session) }
   }
 
   private async selectPreset(params: unknown): Promise<unknown> {
@@ -901,10 +898,11 @@ export class BridgeCore {
   }
 
   private agentPresetOf(session: Session): string | null {
-    const agent = this.safeRead(() => this.deps.agents?.get(session.id))
-    if (agent === undefined || agent === null) return session.header.agentPreset ?? null
-    return this.safeRead(() => this.deps.getAgentPresets()?.composedPreset(agent.ctx) ?? null)
-      ?? session.header.agentPreset ?? null
+    const presets = this.deps.getAgentPresets()
+    // The header is a creation-time fact. After a blank-session preset switch,
+    // only the projection includes the committed agent-preset/selected event.
+    // A projected null is authoritative too: do not fall back to the header.
+    return presets ? presets.presetForSession(session) : session.header.agentPreset ?? null
   }
 
   private safeRead<T>(read: () => T): T | null {
