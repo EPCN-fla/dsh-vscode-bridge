@@ -52,6 +52,7 @@ flowchart LR
 
 | 插件版本 | 最低适配的 DSH 版本 | 最高适配的 DSH 版本 |
 | --- | --- | --- |
+| 0.5.2 | 0.2.2-rc.2 | 0.2.2-rc.3 |
 | 0.5.1 | 0.2.2-rc.2 | 0.2.2-rc.2 |
 | 0.5.0 | 0.2.2-rc.2 | 0.2.2-rc.2 |
 | 0.4.2 | 0.1.7-rc.1 | 0.2.2-rc.1 |
@@ -61,7 +62,7 @@ flowchart LR
 | 0.2.x | 0.1.5-rc.2 | 0.1.7-rc.1 |
 | 0.1.x | 0.1.5-rc.2 | 0.1.5-rc.2 |
 
-插件 `0.5.0` 起仅支持 DSH `0.2.2-rc.2` 与 Node.js `>=24.9.0`，不再适配旧版 DSH 或 Node 22。
+插件 `0.5.2` 支持 DSH `0.2.2-rc.2` 与 `0.2.2-rc.3`；`0.5.0`–`0.5.1` 仅支持 DSH `0.2.2-rc.2`。上述版本均要求 Node.js `>=24.9.0`，不再适配旧版 DSH 或 Node 22。
 
 插件未在 `peerDependencies` 声明 DSH 包，因此不受 peer 版本强制约束——0.1.7 的安装/启动检查（DSH-0.1.7-J1-01）与 0.2.0 新增的 profile 组合期兼容预审（不满足 `@deepseek-ai/dsh*` peer 的行会被禁用，可用 `dsh plugin allow-version` 授予精确版本豁免）都只检查声明了 DSH peer 的插件。
 
@@ -262,7 +263,7 @@ dsh plugin --profile acp-vscode add /absolute/path/to/dsh-vscode-bridge
 
 ## 开发
 
-要求 Node `>=24.9.0`（与 DSH `0.2.2-rc.2` 的 engine 对齐）；开发、CI 与真实 Host smoke 均只使用 Node 24。
+要求 Node `>=24.9.0`（与 DSH `0.2.2-rc.2`、`0.2.2-rc.3` 的 engine 对齐）；开发、CI 与真实 Host smoke 均只使用 Node 24。
 
 ```sh
 pnpm install --no-frozen-lockfile
@@ -273,7 +274,7 @@ pnpm run build       # 产出 lib/ 与 lib/types/
 
 ### CI 触发与报告
 
-普通分支推送不触发 CI。PR 创建、更新或重新打开时，由准备 job 读取 [package.json](<package.json>) 的 `dshCompatibility`，按声明的 DSH 版本动态创建验证 job。当前唯一目标为 DSH `0.2.2-rc.2`，仅在 Node 24 上执行类型检查、测试、构建和精确宿主导入 smoke。失败仍会令对应 job 失败，并在 Actions Summary 中记录 Node 状态与测试统计；日志和临时 tarball 仅留在 runner，不上传 artifacts，不创建 GitHub Release。
+普通分支推送不触发 CI。PR 创建、更新或重新打开时，由准备 job 读取 [package.json](<package.json>) 的 `dshCompatibility`，按声明的 DSH 版本动态创建验证 job。当前目标为 DSH `0.2.2-rc.2` 与 `0.2.2-rc.3`，每个目标均仅在 Node 24 上执行类型检查、测试、构建和精确宿主导入 smoke。失败仍会令对应 job 失败，并在 Actions Summary 中记录 Node 状态与测试统计；日志和临时 tarball 仅留在 runner，不上传 artifacts，不创建 GitHub Release。
 
 支持版本仅在 [package.json](<package.json>) 的 `dshCompatibility` 维护：键为精确 DSH 版本，值的 `cordis` 为该宿主对应的 Cordis 开发依赖版本（精确版本或 `~` 范围）。例如 `"0.2.1-rc.2": { "cordis": "~4.0.5" }`。新增/删除对应条目即可调整矩阵，无需修改 CI YAML 或脚本；验证 job 会将全部 DSH 开发依赖切换到所选版本。`devDependencies` 仍是本地开发默认版本，不代表完整支持列表。此字段是本插件的测试元数据，不是 DSH 官方安装兼容声明；空声明或非法版本会使准备 job 失败。
 
