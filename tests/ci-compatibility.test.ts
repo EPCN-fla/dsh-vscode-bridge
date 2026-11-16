@@ -73,12 +73,15 @@ test('missing, empty and invalid declarations fail rather than silently skipping
   }
 })
 
-test('repository manifest pins the sole DSH and Node 24 development cohort', async () => {
+test('repository manifest pins both supported DSH cohorts to Node 24', async () => {
   const root = fileURLToPath(new URL('..', import.meta.url))
   const manifest = JSON.parse(await readFile(join(root, 'package.json'), 'utf8'))
   const result = spawnSync(process.execPath, [script, 'matrix'], { cwd: root, env: { ...process.env, GITHUB_OUTPUT: '' }, encoding: 'utf8' })
   assert.equal(result.status, 0, result.stderr)
-  assert.deepEqual(JSON.parse(result.stdout), { include: [{ 'dsh-version': '0.2.2-rc.2', node: [24] }] })
+  assert.deepEqual(JSON.parse(result.stdout), { include: [
+    { 'dsh-version': '0.2.2-rc.2', node: [24] },
+    { 'dsh-version': '0.2.2-rc.3', node: [24] },
+  ] })
   assert.equal(manifest.engines.node, '>=24.9.0')
   assert.equal(manifest.peerDependencies['@deepseek-ai/cordis'], '^4.1.0')
 })
