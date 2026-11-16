@@ -205,7 +205,7 @@ dsh plugin --profile acp-vscode add /absolute/path/to/dsh-vscode-bridge
 | `command.list` | `{ sessionId }` | `{ commands: [{ name, description, inputHint?, attachments? }] }`——该会话 agent 生效的原生指令目录（按名排序） |
 | `command.run` | `{ sessionId, line, timeoutMs? }` | `{ commandId, kind: 'success' \| 'error', text?, sourceEventSeq? }`——`line` 须以 `/` 开头；处理器级失败以 `kind:'error'+text` 返回，不作 RPC 错误 |
 | `skill.list` | `{ sessionId? }` | `{ skills: [{ name, description, whenToUse?, source, provider }] }`——传 `sessionId` 按会话头 cwd 解析项目级技能，否则用进程 cwd；无技能返回空数组 |
-| `session.exportZip` | `{ sessionId, destPath? }` | `{ path, fileName, bytes, entries }`——含子代理后代的会话日志 ZIP 落盘到 `destPath`（缺省 `<tmpdir>/dsh-session-export/<fileName>`）；活会话先做持久化屏障 |
+| `session.exportZip` | `{ sessionId, destPath?, includeDescendants? }` | `{ path, fileName, bytes, entries }`——会话日志 ZIP 落盘到 `destPath`（缺省 `<tmpdir>/dsh-session-export/<fileName>`）；`includeDescendants` 缺省为 `true`（含子代理后代），恢复单根 transcript 时可传 `false`；活会话先做持久化屏障 |
 
 会话行的 `parentSession` 与 `origin` 分别表示直接父会话和来源；`origin` 为 `"subagent"` 或 `null`，`capabilities.sessionOrigin` 标识此能力。`session.list` 的 `stored` 行通过 `sessionQuery.inspectSession` 在不恢复会话的情况下读取最新预设 projection；projection 不可用时省略 `agentPreset`，不再根据创建时 header 猜测。`session.get` 会折叠后续 `agent-preset/selected` 事件，返回最新预设。`preset.current` 在 projection 不可读时返回 `-32002`，并携带 `data.code: 'agent-preset/unavailable'`。
 
