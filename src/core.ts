@@ -807,6 +807,7 @@ export class BridgeCore {
   private async exportSessionZip(params: unknown, connectionId: number): Promise<unknown> {
     const sessionId = requireString(params, 'sessionId')
     const destPath = optionalString(params, 'destPath')
+    const includeDescendants = optionalBoolean(params, 'includeDescendants') ?? true
     const sessionQuery = this.requireService(this.deps.getSessionQuery(), 'sessionQuery')
     const persistence = this.requireService(this.deps.sessionPersistence, 'sessionPersistence')
     const archive = await this.sessionLogExportModule()
@@ -848,7 +849,7 @@ export class BridgeCore {
         deps,
         rootContent,
         id,
-        true,
+        includeDescendants,
         archive.DEFAULT_SESSION_LOG_COMPRESSION_LEVEL,
         controller.signal,
       )

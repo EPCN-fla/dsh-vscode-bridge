@@ -52,6 +52,7 @@ flowchart LR
 
 | 插件版本 | 最低适配的 DSH 版本 | 最高适配的 DSH 版本 |
 | --- | --- | --- |
+| 0.5.3 | 0.2.2-rc.2 | 0.2.2-rc.3 |
 | 0.5.2 | 0.2.2-rc.2 | 0.2.2-rc.3 |
 | 0.5.1 | 0.2.2-rc.2 | 0.2.2-rc.2 |
 | 0.5.0 | 0.2.2-rc.2 | 0.2.2-rc.2 |
@@ -61,8 +62,6 @@ flowchart LR
 | 0.3.x | 0.1.7-rc.1 | 0.2.0-rc.2 |
 | 0.2.x | 0.1.5-rc.2 | 0.1.7-rc.1 |
 | 0.1.x | 0.1.5-rc.2 | 0.1.5-rc.2 |
-
-插件 `0.5.2` 支持 DSH `0.2.2-rc.2` 与 `0.2.2-rc.3`；`0.5.0`–`0.5.1` 仅支持 DSH `0.2.2-rc.2`。上述版本均要求 Node.js `>=24.9.0`，不再适配旧版 DSH 或 Node 22。
 
 插件未在 `peerDependencies` 声明 DSH 包，因此不受 peer 版本强制约束——0.1.7 的安装/启动检查（DSH-0.1.7-J1-01）与 0.2.0 新增的 profile 组合期兼容预审（不满足 `@deepseek-ai/dsh*` peer 的行会被禁用，可用 `dsh plugin allow-version` 授予精确版本豁免）都只检查声明了 DSH peer 的插件。
 
@@ -205,7 +204,7 @@ dsh plugin --profile acp-vscode add /absolute/path/to/dsh-vscode-bridge
 | `command.list` | `{ sessionId }` | `{ commands: [{ name, description, inputHint?, attachments? }] }`——该会话 agent 生效的原生指令目录（按名排序） |
 | `command.run` | `{ sessionId, line, timeoutMs? }` | `{ commandId, kind: 'success' \| 'error', text?, sourceEventSeq? }`——`line` 须以 `/` 开头；处理器级失败以 `kind:'error'+text` 返回，不作 RPC 错误 |
 | `skill.list` | `{ sessionId? }` | `{ skills: [{ name, description, whenToUse?, source, provider }] }`——传 `sessionId` 按会话头 cwd 解析项目级技能，否则用进程 cwd；无技能返回空数组 |
-| `session.exportZip` | `{ sessionId, destPath? }` | `{ path, fileName, bytes, entries }`——含子代理后代的会话日志 ZIP 落盘到 `destPath`（缺省 `<tmpdir>/dsh-session-export/<fileName>`）；活会话先做持久化屏障 |
+| `session.exportZip` | `{ sessionId, destPath?, includeDescendants? }` | `{ path, fileName, bytes, entries }`——会话日志 ZIP 落盘到 `destPath`（缺省 `<tmpdir>/dsh-session-export/<fileName>`）；`includeDescendants` 缺省为 `true`（含子代理后代），恢复单根 transcript 时可传 `false`；活会话先做持久化屏障 |
 
 会话行的 `parentSession` 与 `origin` 分别表示直接父会话和来源；`origin` 为 `"subagent"` 或 `null`，`capabilities.sessionOrigin` 标识此能力。`session.list` 的 `stored` 行通过 `sessionQuery.inspectSession` 在不恢复会话的情况下读取最新预设 projection；projection 不可用时省略 `agentPreset`，不再根据创建时 header 猜测。`session.get` 会折叠后续 `agent-preset/selected` 事件，返回最新预设。`preset.current` 在 projection 不可读时返回 `-32002`，并携带 `data.code: 'agent-preset/unavailable'`。
 

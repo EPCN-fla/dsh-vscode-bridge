@@ -1220,6 +1220,29 @@ test('session.exportZip streams the archive to a host file', async () => {
   }
 })
 
+
+test('session.exportZip can omit descendants for root-only transcript restores', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'dsh-bridge-root-export-'))
+  try {
+    await withCore((deps, mocks) => {
+      mocks.live.set('s1', makeSession('s1', '/tmp/project'))
+      mocks.exportLogs.set('s1', '{"type":"session"}\n')
+      ;(deps as unknown as Record<string, unknown>).sessionPersistence = { stat: async () => undefined }
+    }, async (core, mocks) => {
+      const client = new TestClient()
+      await client.connect(core.port as number)
+      const exported = await client.request('session.exportZip', {
+        sessionId: 's1', destPath: join(root, 'root-only.zip'), includeDescendants: false,
+      })
+      assert.equal(exported.error, undefined)
+      assert.deepEqual(mocks.calls.exportStreams, [{ id: 's1', includeDescendants: false, level: 6 }])
+      client.close()
+    })
+  } finally {
+    await rm(root, { recursive: true, force: true })
+  }
+})
+
 test('session.exportZip defaults to a tmpdir path named after the session', async () => {
   let produced: string | undefined
   try {
@@ -1410,6 +1433,12 @@ test('session.exportZip produces a valid ZIP through the real archive module', {
       assert.equal(bytes.subarray(0, 4).toString('hex'), '504b0304')
       assert.ok(bytes.includes(Buffer.from('subagents/child/')))
       assert.equal(result.bytes, bytes.byteLength)
+
+      const rootOnlyPath = join(root, 'root-only.zip')
+      const rootOnly = await client.request('session.exportZip', { sessionId: 'root', destPath: rootOnlyPath, includeDescendants: false })
+      assert.equal((rootOnly.result as { entries: number }).entries, 1)
+      const rootOnlyBytes = await readFile(rootOnlyPath)
+      assert.ok(!rootOnlyBytes.includes(Buffer.from('subagents/child/')))
       client.close()
     })
   } finally {
