@@ -726,6 +726,7 @@ export class BridgeCore {
     const commands = this.requireService(this.deps.getCommands(), 'commands')
     const agent = this.requireLiveAgent(sessionId)
     const controller = new AbortController()
+    const operation = this.trackInflight(connectionId, controller)
     const timer = setTimeout(() => {
       controller.abort(new BridgeRpcError(
         RPC_SERVER_ERROR,
@@ -733,7 +734,6 @@ export class BridgeCore {
         { code: 'command/timeout' },
       ))
     }, timeoutMs)
-    const operation = this.trackInflight(connectionId, controller)
     try {
       const aborted = new Promise<never>((_, reject) => {
         controller.signal.addEventListener('abort', () => reject(controller.signal.reason), { once: true })
@@ -850,7 +850,7 @@ export class BridgeCore {
       }
       const fileName = archive.sessionLogZipFilename(sessionId)
       const defaultDir = join(tmpdir(), 'dsh-session-export')
-      if (destPath === undefined) {
+      if (temporary || destPath === undefined) {
         await mkdir(defaultDir, { recursive: true, mode: 0o700 })
         await chmod(defaultDir, 0o700)
       }
@@ -874,10 +874,15 @@ export class BridgeCore {
       )
       await pipeline(Readable.fromWeb(stream), createWriteStream(temporaryPath, { flags: 'wx', mode: 0o600 }))
       const stats = await stat(temporaryPath)
+      const entries = await zipEntryCount(temporaryPath, stats.size)
+      // Rename is the commit point: reject a late abort before atomically
+      // replacing the destination, and never validate through a target that
+      // another concurrent export can replace underneath us.
+      controller.signal.throwIfAborted()
       await rename(temporaryPath, target)
       completed = true
       return {
-        path: target, fileName, bytes: stats.size, entries: await zipEntryCount(target, stats.size),
+        path: target, fileName, bytes: stats.size, entries,
         ...(temporary ? { temporary: true } : {}),
       }
     } catch (error: unknown) {
@@ -986,6 +991,11 @@ export class BridgeCore {
   }
 
   private trackInflight(connectionId: number, controller: AbortController): InflightOperation {
+    if (this.stopping) {
+      throw new BridgeRpcError(RPC_SERVICE_UNAVAILABLE, 'bridge is stopping', {
+        code: 'service-unavailable', service: 'bridge',
+      })
+    }
     let finish!: () => void
     const done = new Promise<void>(resolve => { finish = resolve })
     const operation: InflightOperation = { controller, done, finish }
@@ -1009,7 +1019,6 @@ export class BridgeCore {
   private async abortInflight(connectionId: number): Promise<void> {
     const set = this.inflight.get(connectionId)
     if (set === undefined) return
-    this.inflight.delete(connectionId)
     for (const operation of set) operation.controller.abort()
     await Promise.allSettled([...set].map(operation => operation.done))
   }
