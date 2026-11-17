@@ -6,6 +6,12 @@ import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { ConfigSync, createConfigSync, loadConfigSyncHost, type ConfigSyncContext } from '../src/config-sync.ts'
 
+type PatchRow = Record<string, any>
+
+function insertedRows(patches: PatchRow[], id: string): PatchRow[] {
+  return patches.flatMap(patch => Array.isArray(patch.insert) ? patch.insert : []).filter(row => row.id === id)
+}
+
 async function fixture(t: { after(fn: () => Promise<void>): void }) {
   const home = await mkdtemp(join(tmpdir(), 'bridge-config-'))
   t.after(() => rm(home, { recursive: true, force: true }))
@@ -102,6 +108,80 @@ test('model-only import keeps existing routes unless overwrite is explicit', asy
   assert.doesNotMatch(output, /target-key/)
   assert.match(output, /ownField/)
   assert.match(output, /target-only/)
+  const raw = f.host.parse(f.context.patchPath) as PatchRow[]
+  assert.equal(raw.filter(patch => !patch.insert && patch.id === 'llm-pi-ai').length, 0,
+    'overwrite edits the user-owned insertion instead of appending an override')
+  assert.equal(insertedRows(raw, 'llm-pi-ai').length, 1)
+  output = await readFile(f.context.patchPath, 'utf8')
+  assert.doesNotMatch(output, /target-key|id: original/, 'stale values are absent from the raw YAML')
+  assert.match(output, /!!js process.env.EXAMPLE_KEY/)
+
+  const sourceBefore = await readFile(f.sourcePatch, 'utf8')
+  const sourceAfter = sourceBefore.replace('apiKey: test-secret-never-on-wire', 'apiKey: source-v2')
+  assert.notEqual(sourceAfter, sourceBefore)
+  await writeFile(f.sourcePatch, sourceAfter)
+  const repeated = await f.sync.preview({ presets: false, overwrite: true })
+  await f.sync.import({ presets: false, overwrite: true, revision: repeated.revision })
+  const rewritten = f.host.parse(f.context.patchPath) as PatchRow[]
+  assert.equal(rewritten.length, raw.length, 'a changed repeated overwrite does not grow the patch document')
+  assert.equal(rewritten.filter(patch => !patch.insert && patch.id === 'llm-pi-ai').length, 0)
+  assert.equal(insertedRows(rewritten, 'llm-pi-ai').length, 1)
+  const latest = f.host.compose([rewritten]).find(row => row.id === 'llm-pi-ai')
+  assert.equal((latest?.config as PatchRow).providers.example.apiKey, 'source-v2')
+  output = await readFile(f.context.patchPath, 'utf8')
+  assert.doesNotMatch(output, /test-secret-never-on-wire|target-key/)
+})
+
+test('legacy insert and V1/V2 overrides collapse to one effective V3 definition', async t => {
+  const f = await fixture(t)
+  await writeFile(f.context.patchPath, `- insert:
+    - id: llm-pi-ai
+      name: '@deepseek-ai/dsh-llm-pi-ai'
+      config:
+        ownField: inserted
+        providers:
+          example: { apiKey: insert-key, models: [{ id: inserted }] }
+          target-only: { models: [{ id: retained }] }
+- id: llm-pi-ai
+  name: '@deepseek-ai/dsh-llm-pi-ai'
+  inject: { legacyPolicy: true }
+  config:
+    ownField: legacy-v1
+    providers:
+      example: { apiKey: legacy-v1-key, models: [{ id: legacy-v1 }] }
+      target-only: { models: [{ id: retained }] }
+- id: llm-pi-ai
+  name: '@deepseek-ai/dsh-llm-pi-ai'
+  disabled: true
+  config:
+    ownField: legacy-v2
+    providers:
+      example: { apiKey: legacy-v2-key, models: [{ id: legacy-v2 }] }
+      target-only: { models: [{ id: retained }] }
+`)
+  const preview = await f.sync.preview({ presets: false, overwrite: true })
+  await f.sync.import({ presets: false, overwrite: true, revision: preview.revision })
+  const raw = f.host.parse(f.context.patchPath) as PatchRow[]
+  assert.equal(raw.filter(patch => !patch.insert && patch.id === 'llm-pi-ai').length, 0,
+    'all legacy tail overrides are removed')
+  const inserted = insertedRows(raw, 'llm-pi-ai')
+  assert.equal(inserted.length, 1)
+  assert.deepEqual(inserted[0]!.inject, { legacyPolicy: true })
+  assert.equal(inserted[0]!.disabled, true)
+  const output = await readFile(f.context.patchPath, 'utf8')
+  assert.doesNotMatch(output, /insert-key|legacy-v1-key|legacy-v2-key/,
+    'the raw YAML contains none of the superseded credentials')
+  assert.match(output, /test-secret-never-on-wire/)
+  assert.match(output, /!!js process.env.EXAMPLE_KEY/)
+
+  const effective = f.host.compose([raw]).find(row => row.id === 'llm-pi-ai')
+  assert.ok(effective)
+  const config = effective.config as PatchRow
+  assert.equal(config.ownField, 'legacy-v2')
+  assert.equal(config.providers.example.apiKey, 'test-secret-never-on-wire')
+  assert.equal(config.providers.example.models[0].id, 'test-model')
+  assert.equal(config.providers['target-only'].models[0].id, 'retained')
+  assert.equal(config.providers['env-route'].models[0].id, 'env-model')
 })
 
 test('stale source, target and option generations refuse writes', async t => {
