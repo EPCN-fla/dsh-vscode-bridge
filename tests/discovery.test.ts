@@ -7,6 +7,7 @@ import { spawn } from 'node:child_process'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { DiscoveryFile } from '../src/discovery.ts'
+import { defaultDiscoveryDir } from '../src/index.ts'
 import { BRIDGE_PLUGIN_NAME, type DiscoveryFilePayload } from '../src/protocol.ts'
 
 const silent = { info() {}, warn() {}, error() {} }
@@ -127,4 +128,10 @@ test('publish into an uncreatable directory rejects (core turns it into a warnin
   const discovery = new DiscoveryFile({ directory: join(blocker, 'sub'), logger: silent })
   await assert.rejects(discovery.publish(payload(7310)))
   await rm(root, { recursive: true, force: true })
+})
+
+test('default discovery follows DSH_HOME and falls back to the user home', () => {
+  assert.equal(defaultDiscoveryDir({ DSH_HOME: '/custom/dsh-home' }, '/unused'), join('/custom/dsh-home', 'vscode-bridge'))
+  assert.equal(defaultDiscoveryDir({}, '/home/test-user'), join('/home/test-user', '.dsh', 'vscode-bridge'))
+  assert.equal(defaultDiscoveryDir({ DSH_HOME: '' }, '/home/test-user'), join('/home/test-user', '.dsh', 'vscode-bridge'))
 })

@@ -107,7 +107,7 @@ export function apply(ctx: Context, config: BridgePluginConfig): void {
     portStart: config.portStart ?? 7310,
     portEnd: config.portEnd ?? 7319,
     token: config.token ?? randomToken(),
-    discoveryDir: config.discoveryDir ?? join(homedir(), '.dsh', 'vscode-bridge'),
+    discoveryDir: config.discoveryDir ?? defaultDiscoveryDir(),
     attachSessions: config.attachSessions ?? true,
     commandTimeoutMs: config.commandTimeoutMs ?? 180000,
   }
@@ -162,6 +162,11 @@ export function apply(ctx: Context, config: BridgePluginConfig): void {
       await core.stop()
     }
   }, 'dsh-vscode-bridge lifecycle')
+}
+
+/** Discovery follows the same DSH_HOME as the launcher and extension. */
+export function defaultDiscoveryDir(env: NodeJS.ProcessEnv = process.env, home = homedir()): string {
+  return join(env.DSH_HOME || join(home, '.dsh'), 'vscode-bridge')
 }
 
 function randomToken(): string {
