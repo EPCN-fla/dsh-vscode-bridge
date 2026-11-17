@@ -6,8 +6,7 @@ import { existsSync } from 'node:fs'
 import { spawn } from 'node:child_process'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { DiscoveryFile } from '../src/discovery.ts'
-import { defaultDiscoveryDir } from '../src/index.ts'
+import { defaultDiscoveryDir, DiscoveryFile } from '../src/discovery.ts'
 import { BRIDGE_PLUGIN_NAME, type DiscoveryFilePayload } from '../src/protocol.ts'
 
 const silent = { info() {}, warn() {}, error() {} }

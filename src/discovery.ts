@@ -1,6 +1,6 @@
 /**
  * Discovery file management: the bridge publishes a single
- * `<discoveryDir>/<pid>.json` (default `$HOME/.dsh/vscode-bridge`) holding
+ * `<discoveryDir>/<pid>.json` (default `$DSH_HOME/vscode-bridge`) holding
  * host/port/token plus the directories this instance serves. The VS Code
  * extension scans that one directory and picks the entry whose
  * `directories` contain the folder it opened — nothing is written into
@@ -12,9 +12,15 @@
 
 import { chmod, mkdir, readdir, rename, unlink, writeFile } from 'node:fs/promises'
 import { unlinkSync } from 'node:fs'
+import { homedir } from 'node:os'
 import { join } from 'node:path'
 import type { DiscoveryFilePayload } from './protocol.ts'
 import type { BridgeTransportLogger } from './server.ts'
+
+/** Discovery follows the same DSH_HOME as the launcher and extension. */
+export function defaultDiscoveryDir(env: NodeJS.ProcessEnv = process.env, home = homedir()): string {
+  return join(env.DSH_HOME || join(home, '.dsh'), 'vscode-bridge')
+}
 
 /** Discovery entries are named `<pid>.json`; anything else is left alone. */
 const ENTRY_PATTERN = /^(\d+)\.json$/

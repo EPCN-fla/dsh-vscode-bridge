@@ -30,8 +30,6 @@
 
 import type { Context } from '@deepseek-ai/cordis'
 import { randomBytes } from 'node:crypto'
-import { homedir } from 'node:os'
-import { join } from 'node:path'
 import Schema from '@deepseek-ai/schemastery'
 // Side-effect type imports: declaration-merge the consumed service keys and
 // session events onto the cordis `Context`/`Events` interfaces.
@@ -45,6 +43,7 @@ import type {} from '@deepseek-ai/dsh-commands'
 import type {} from '@deepseek-ai/dsh-skill'
 import { BridgeCore, type ResolvedBridgeConfig } from './core.ts'
 import { createConfigSync } from './config-sync.ts'
+import { defaultDiscoveryDir } from './discovery.ts'
 
 export const name = 'dsh-vscode-bridge'
 
@@ -162,11 +161,6 @@ export function apply(ctx: Context, config: BridgePluginConfig): void {
       await core.stop()
     }
   }, 'dsh-vscode-bridge lifecycle')
-}
-
-/** Discovery follows the same DSH_HOME as the launcher and extension. */
-export function defaultDiscoveryDir(env: NodeJS.ProcessEnv = process.env, home = homedir()): string {
-  return join(env.DSH_HOME || join(home, '.dsh'), 'vscode-bridge')
 }
 
 function randomToken(): string {
