@@ -4,7 +4,7 @@
  * JSON object per line; every server message is one JSON object per line.
  *
  * Auth: the token lives in the discovery file
- * (`$HOME/.dsh/vscode-bridge/<pid>.json`, mode 0600). Every request —
+ * (`$DSH_HOME/vscode-bridge/<pid>.json`, mode 0600). Every request —
  * including `bridge.handshake` — must carry it in the top-level `token`
  * field.
  *
@@ -139,7 +139,7 @@ export interface BridgeHandshakeResult {
 }
 
 /**
- * Contents of `$HOME/.dsh/vscode-bridge/<pid>.json`. Deleted on plugin
+ * Contents of `$DSH_HOME/vscode-bridge/<pid>.json`. Deleted on plugin
  * unload; stale entries are reaped by the next instance that starts.
  */
 export interface DiscoveryFilePayload {

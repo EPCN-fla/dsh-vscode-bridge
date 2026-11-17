@@ -22,7 +22,7 @@
  *    sessions from ordinary forks.
  *
  * Discovery: the listener seat (host/port) plus a bearer token are written to
- * `$HOME/.dsh/vscode-bridge/<pid>.json` (mode 0600) and removed on unload;
+ * `$DSH_HOME/vscode-bridge/<pid>.json` (mode 0600) and removed on unload;
  * the extension matches an instance via the payload's `directories` list.
  *
  * @module dsh-vscode-bridge
@@ -30,8 +30,6 @@
 
 import type { Context } from '@deepseek-ai/cordis'
 import { randomBytes } from 'node:crypto'
-import { homedir } from 'node:os'
-import { join } from 'node:path'
 import Schema from '@deepseek-ai/schemastery'
 // Side-effect type imports: declaration-merge the consumed service keys and
 // session events onto the cordis `Context`/`Events` interfaces.
@@ -45,6 +43,7 @@ import type {} from '@deepseek-ai/dsh-commands'
 import type {} from '@deepseek-ai/dsh-skill'
 import { BridgeCore, type ResolvedBridgeConfig } from './core.ts'
 import { createConfigSync } from './config-sync.ts'
+import { defaultDiscoveryDir } from './discovery.ts'
 
 export const name = 'dsh-vscode-bridge'
 
@@ -74,7 +73,7 @@ export interface BridgePluginConfig {
   token?: string
   /**
    * Directory holding the `<pid>.json` discovery file. Defaults to
-   * `$HOME/.dsh/vscode-bridge`.
+   * `$DSH_HOME/vscode-bridge`.
    */
   discoveryDir?: string
   /** Attach new sessions to their cwd's workspace on `session/created`. */
@@ -94,7 +93,7 @@ export const Config: Schema<BridgePluginConfig> = Schema.object({
 })
 
 // Keep in sync with package.json#version (single source bump on release).
-const PLUGIN_VERSION = '0.5.3'
+const PLUGIN_VERSION = '0.5.4'
 
 /**
  * Mount the bridge. The Cordis wiring stays here; all behavior lives in
@@ -107,7 +106,7 @@ export function apply(ctx: Context, config: BridgePluginConfig): void {
     portStart: config.portStart ?? 7310,
     portEnd: config.portEnd ?? 7319,
     token: config.token ?? randomToken(),
-    discoveryDir: config.discoveryDir ?? join(homedir(), '.dsh', 'vscode-bridge'),
+    discoveryDir: config.discoveryDir ?? defaultDiscoveryDir(process.env, undefined, ctx.get('profileContext')?.home),
     attachSessions: config.attachSessions ?? true,
     commandTimeoutMs: config.commandTimeoutMs ?? 180000,
   }

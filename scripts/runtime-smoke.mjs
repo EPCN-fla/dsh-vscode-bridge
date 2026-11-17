@@ -20,7 +20,7 @@ await mkdir('.sandbox', { recursive: true })
 const home = await mkdtemp(resolve('.sandbox', 'smoke-home-'))
 const profile = join(home, 'profiles', 'bridge-test')
 const web = join(home, 'profiles', 'web')
-const discovery = join(home, 'discovery')
+const discovery = join(home, 'vscode-bridge')
 for (const path of [profile, web, discovery]) await mkdir(path, { recursive: true })
 await writeFile(join(profile, 'package.json'), JSON.stringify({ private: true,
   // The full Web preset roster references optional packages not mounted by the
@@ -67,7 +67,6 @@ await writeFile(join(profile, 'cordis.patch.yml'), `- id: session-log-deepseek
     - id: bridge
       name: dsh-vscode-bridge
       config:
-        discoveryDir: ${JSON.stringify(discovery)}
         portStart: 48710
         portEnd: 48729
 `)

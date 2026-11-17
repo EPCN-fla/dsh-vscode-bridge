@@ -5,10 +5,10 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { createConnection, type Socket } from 'node:net'
-import { mkdtemp, readFile, rm, stat, writeFile } from 'node:fs/promises'
+import { chmod, mkdtemp, readFile, readdir, rm, stat, writeFile } from 'node:fs/promises'
 import { existsSync, mkdtempSync } from 'node:fs'
 import { tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { basename, dirname, join } from 'node:path'
 import { BridgeCore, matchesEventType } from '../src/core.ts'
 import type { BridgeCoreDeps } from '../src/core.ts'
 import { DEFAULT_PUSH_TYPES } from '../src/protocol.ts'
@@ -47,17 +47,22 @@ function makeMocks() {
     skillLookups: [] as { cwd?: string }[],
     exportFlushes: [] as string[],
     exportStreams: [] as { id: string; includeDescendants: boolean; level: number }[],
+    exportAborts: [] as string[],
   }
   const workspaces = new Map<string, { id: string; path: string; title: string; sessionIds: string[] }>()
   const presetProjections = new Map<string, string | null>()
   // Stored log texts keyed by session id; the mock persistence/archive read them.
   const exportLogs = new Map<string, string>()
+  const slowAbortReleases: (() => void)[] = []
   const mocks = {
     calls,
     workspaces,
     presetProjections,
     live,
     exportLogs,
+    releaseSlowAborts: () => {
+      for (const release of slowAbortReleases.splice(0)) release()
+    },
     sessions: {
       list: () => [...live.values()],
       get: (id: string) => live.get(id),
@@ -193,6 +198,25 @@ function makeMocks() {
             start(controller) {
               controller.enqueue(new TextEncoder().encode('PK partial'))
               controller.error(new Error('stream boom'))
+            },
+          })
+        }
+        if (id === 'invalid-zip') {
+          return new ReadableStream<Uint8Array>({
+            start(controller) {
+              controller.enqueue(new TextEncoder().encode('not-a-zip'))
+              controller.close()
+            },
+          })
+        }
+        if (id === 'slow-abort') {
+          return new ReadableStream<Uint8Array>({
+            start(controller) {
+              controller.enqueue(new TextEncoder().encode('PK partial'))
+              signal.addEventListener('abort', () => {
+                calls.exportAborts.push(id)
+                slowAbortReleases.push(() => controller.error(signal.reason))
+              }, { once: true })
             },
           })
         }
@@ -1341,6 +1365,32 @@ test('session.exportZip probes the archive module once and flips the capability 
   })
 })
 
+
+test('disconnecting during the export module probe prevents flush and file creation', async () => {
+  let finishProbe!: () => void
+  let probeStarted = false
+  await withCore((deps, mocks) => {
+    mocks.exportLogs.set('s1', '{"type":"session"}\n')
+    const mutable = deps as unknown as Record<string, unknown>
+    mutable.sessionPersistence = { stat: async () => undefined }
+    mutable.loadSessionLogExport = () => {
+      probeStarted = true
+      return new Promise(resolve => { finishProbe = () => resolve(mocks.exportModule) })
+    }
+  }, async (core, mocks) => {
+    const client = new TestClient()
+    await client.connect(core.port as number)
+    void client.request('session.exportZip', { sessionId: 's1' })
+    await waitFor(() => probeStarted)
+    client.close()
+    await new Promise(resolve => setTimeout(resolve, 50))
+    finishProbe()
+    await new Promise(resolve => setTimeout(resolve, 50))
+    assert.equal(mocks.calls.exportFlushes.length, 0)
+    assert.equal(mocks.calls.exportStreams.length, 0)
+  })
+})
+
 test('session.exportZip removes the partial file when the stream fails mid-write', async () => {
   const root = await mkdtemp(join(tmpdir(), 'dsh-bridge-export-fail-'))
   try {
@@ -1361,6 +1411,161 @@ test('session.exportZip removes the partial file when the stream fails mid-write
   }
 })
 
+
+test('session.exportZip preserves an existing target when the stream fails', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'dsh-bridge-export-preserve-'))
+  try {
+    await withCore((deps, mocks) => {
+      mocks.exportLogs.set('stream-fails', '{"type":"session"}\n')
+      ;(deps as unknown as Record<string, unknown>).sessionPersistence = { stat: async () => undefined }
+    }, async (core) => {
+      const client = new TestClient()
+      await client.connect(core.port as number)
+      const destPath = join(root, 'broken.zip')
+      await writeFile(destPath, 'previous-valid-archive')
+      const exported = await client.request('session.exportZip', { sessionId: 'stream-fails', destPath })
+      assert.equal((exported.error as { code: number }).code, -32603)
+      assert.equal(await readFile(destPath, 'utf8'), 'previous-valid-archive')
+      assert.deepEqual(await readdir(root), ['broken.zip'], 'no temporary part file remains')
+      client.close()
+    })
+  } finally {
+    await rm(root, { recursive: true, force: true })
+  }
+})
+
+
+test('session.exportZip validates the part before replacing an existing target', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'dsh-bridge-export-invalid-'))
+  try {
+    await withCore((deps, mocks) => {
+      mocks.exportLogs.set('invalid-zip', '{"type":"session"}\n')
+      ;(deps as unknown as Record<string, unknown>).sessionPersistence = { stat: async () => undefined }
+    }, async (core) => {
+      const client = new TestClient()
+      await client.connect(core.port as number)
+      const destPath = join(root, 'existing.zip')
+      await writeFile(destPath, 'previous-valid-archive')
+      const exported = await client.request('session.exportZip', { sessionId: 'invalid-zip', destPath })
+      assert.equal((exported.error as { code: number }).code, -32603)
+      assert.equal(await readFile(destPath, 'utf8'), 'previous-valid-archive')
+      assert.deepEqual(await readdir(root), ['existing.zip'], 'validation failure leaves no part or new target')
+      client.close()
+    })
+  } finally {
+    await rm(root, { recursive: true, force: true })
+  }
+})
+
+test('temporary exports use unique 0600 files in a 0700 directory', async () => {
+  const produced: string[] = []
+  let temporaryDir: string | undefined
+  try {
+    await withCore((deps, mocks) => {
+      mocks.exportLogs.set('s1', '{"type":"session"}\n')
+      ;(deps as unknown as Record<string, unknown>).sessionPersistence = { stat: async () => undefined }
+    }, async (core) => {
+      const client = new TestClient()
+      await client.connect(core.port as number)
+      const first = await client.request('session.exportZip', { sessionId: 's1', temporary: true })
+      const second = await client.request('session.exportZip', { sessionId: 's1', temporary: true })
+      const a = first.result as { path: string; temporary: boolean }
+      const b = second.result as { path: string; temporary: boolean }
+      produced.push(a.path, b.path)
+      assert.equal(a.temporary, true)
+      assert.notEqual(a.path, b.path)
+      assert.ok(basename(a.path).startsWith('restore-'))
+      assert.equal((await stat(a.path)).mode & 0o777, 0o600)
+      temporaryDir = dirname(a.path)
+      assert.equal((await stat(temporaryDir)).mode & 0o777, 0o700)
+
+      // A supplied destPath is intentionally ignored for temporary exports;
+      // it must not bypass re-securing the shared default directory.
+      await chmod(temporaryDir, 0o755)
+      const ignoredDest = join(temporaryDir, 'ignored.zip')
+      const third = await client.request('session.exportZip', { sessionId: 's1', temporary: true, destPath: ignoredDest })
+      const c = third.result as { path: string; temporary: boolean }
+      produced.push(c.path)
+      assert.equal(c.temporary, true)
+      assert.notEqual(c.path, ignoredDest)
+      assert.equal(dirname(c.path), temporaryDir)
+      assert.equal((await stat(temporaryDir)).mode & 0o777, 0o700)
+      assert.equal((await stat(c.path)).mode & 0o777, 0o600)
+      client.close()
+    })
+  } finally {
+    await Promise.all(produced.map(path => rm(path, { force: true })))
+    if (temporaryDir !== undefined) await chmod(temporaryDir, 0o700).catch(() => {})
+  }
+})
+
+test('stop aborts an export and drains temporary-file cleanup', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'dsh-bridge-export-stop-'))
+  try {
+    await withCore((deps, mocks) => {
+      mocks.exportLogs.set('never-ends', '{"type":"session"}\n')
+      ;(deps as unknown as Record<string, unknown>).sessionPersistence = { stat: async () => undefined }
+    }, async (core, mocks) => {
+      const client = new TestClient()
+      await client.connect(core.port as number)
+      const destPath = join(root, 'aborted.zip')
+      void client.request('session.exportZip', { sessionId: 'never-ends', destPath })
+      await waitFor(() => mocks.calls.exportStreams.length === 1)
+      await core.stop()
+      assert.equal(existsSync(destPath), false)
+      assert.deepEqual(await readdir(root), [], 'stop returns only after the part file is removed')
+      client.close()
+    })
+  } finally {
+    await rm(root, { recursive: true, force: true })
+  }
+})
+
+
+test('stop joins disconnect cleanup and rejects new inflight exports', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'dsh-bridge-export-stop-race-'))
+  try {
+    await withCore((deps, mocks) => {
+      mocks.exportLogs.set('slow-abort', '{"type":"session"}\n')
+      mocks.exportLogs.set('s1', '{"type":"session"}\n')
+      ;(deps as unknown as Record<string, unknown>).sessionPersistence = { stat: async () => undefined }
+    }, async (core, mocks) => {
+      const first = new TestClient()
+      const port = core.port as number
+      await first.connect(port)
+      const firstDest = join(root, 'first.zip')
+      void first.request('session.exportZip', { sessionId: 'slow-abort', destPath: firstDest })
+      await waitFor(() => mocks.calls.exportStreams.length === 1)
+      first.close()
+      await waitFor(() => mocks.calls.exportAborts.length === 1)
+
+      // Disconnect has started draining but deliberately has not finished.
+      // stop must join that same operation rather than losing its registry entry.
+      const stopping = core.stop()
+      const second = new TestClient()
+      try {
+        await second.connect(port)
+        const secondDest = join(root, 'second.zip')
+        const rejected = await second.request('session.exportZip', { sessionId: 's1', destPath: secondDest })
+        const error = rejected.error as { code: number; data: { code: string; service: string } }
+        assert.equal(error.code, -32002)
+        assert.equal(error.data.code, 'service-unavailable')
+        assert.equal(error.data.service, 'bridge')
+        assert.equal(mocks.calls.exportStreams.length, 1, 'stopping closes admission before new archive work')
+        assert.equal(existsSync(secondDest), false)
+      } finally {
+        mocks.releaseSlowAborts()
+        await stopping
+        second.close()
+      }
+      assert.equal(existsSync(firstDest), false)
+      assert.deepEqual(await readdir(root), [], 'stop waits for disconnected cleanup and no late target appears')
+    })
+  } finally {
+    await rm(root, { recursive: true, force: true })
+  }
+})
+
 test('session.exportZip aborts the stream when the connection drops', async () => {
   const root = await mkdtemp(join(tmpdir(), 'dsh-bridge-export-abort-'))
   try {
@@ -1375,6 +1580,43 @@ test('session.exportZip aborts the stream when the connection drops', async () =
       await waitFor(() => mocks.calls.exportStreams.length === 1)
       client.close()
       await waitFor(() => !existsSync(destPath))
+    })
+  } finally {
+    await rm(root, { recursive: true, force: true })
+  }
+})
+
+
+test('session.exportZip rechecks abort after a completed stream before rename', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'dsh-bridge-export-commit-abort-'))
+  let stopping: Promise<void> | undefined
+  let coreForHook: BridgeCore | undefined
+  try {
+    await withCore((deps, mocks) => {
+      mocks.exportLogs.set('s1', '{"type":"session"}\n')
+      const mutable = deps as unknown as Record<string, unknown>
+      mutable.sessionPersistence = { stat: async () => undefined }
+      mutable.loadSessionLogExport = async () => ({
+        ...mocks.exportModule,
+        streamSessionLogZip: (...args: Parameters<typeof mocks.exportModule.streamSessionLogZip>) => {
+          // This already-closed mock stream ignores signal, so only the explicit
+          // pre-commit check can prevent publication after stop aborts the RPC.
+          const stream = mocks.exportModule.streamSessionLogZip(...args)
+          stopping = coreForHook?.stop()
+          return stream
+        },
+      })
+    }, async (core) => {
+      coreForHook = core
+      const client = new TestClient()
+      await client.connect(core.port as number)
+      const destPath = join(root, 'aborted.zip')
+      void client.request('session.exportZip', { sessionId: 's1', destPath })
+      await waitFor(() => stopping !== undefined)
+      await stopping
+      assert.equal(existsSync(destPath), false)
+      assert.deepEqual(await readdir(root), [], 'aborted completed stream leaves neither target nor part')
+      client.close()
     })
   } finally {
     await rm(root, { recursive: true, force: true })
