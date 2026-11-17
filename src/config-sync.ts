@@ -280,7 +280,9 @@ export class ConfigSync {
       const expected = Array.isArray(addition.insert) ? addition.insert as Row[] : [addition]
       for (const row of expected) {
         const applied = resultRows.find(item => item.id === row.id)
-        if (JSON.stringify(applied?.config) !== JSON.stringify(row.config)) {
+        if (applied === undefined
+          || JSON.stringify(applied.config) !== JSON.stringify(row.config)
+          || JSON.stringify(applied.disabled ?? false) !== JSON.stringify(row.disabled ?? false)) {
           conflict('config/shared-override', `Shared home configuration overrides ${row.id}; edit the shared setting instead`)
         }
       }
@@ -339,14 +341,19 @@ function mergeImportedPatches(current: Row[], additions: Patch[]): Row[] {
     }
 
     let inserted: Row | undefined
-    for (const patch of patches) {
+    let insertedPatchIndex = -1
+    for (const [index, patch] of patches.entries()) {
       if (!Array.isArray(patch.insert)) continue
       inserted = patch.insert.find((row: Row) => row.id === addition.id
         && (addition.name === undefined || row.name === addition.name))
-      if (inserted !== undefined) break
+      if (inserted !== undefined) { insertedPatchIndex = index; break }
     }
 
-    const overrides = patches.filter(patch => matches(patch, addition))
+    // Overrides before a user insertion had no target and were skipped by the
+    // composer. Only later overrides contributed to the effective row and may
+    // be folded into it; earlier stale patches must stay dormant and untouched.
+    const overrides = patches.filter((patch, index) => matches(patch, addition)
+      && (insertedPatchIndex < 0 || index > insertedPatchIndex))
     // Preserve non-config policies from earlier overrides, then apply the
     // imported effective config/disabled state as the final values.
     const policies = Object.assign({}, ...overrides.map(patch => {
@@ -364,7 +371,7 @@ function mergeImportedPatches(current: Row[], additions: Patch[]): Row[] {
         config: structuredClone(addition.config),
         disabled: addition.disabled,
       })
-      for (let index = patches.length - 1; index >= 0; index--) {
+      for (let index = patches.length - 1; index > insertedPatchIndex; index--) {
         if (matches(patches[index]!, addition)) patches.splice(index, 1)
       }
       continue

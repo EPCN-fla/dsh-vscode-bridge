@@ -303,3 +303,53 @@ test('optional service degrades without profile facts and redacts parser failure
     return true
   })
 })
+
+test('overrides skipped before a user insertion remain dormant during compaction', async t => {
+  const f = await fixture(t)
+  await writeFile(f.context.patchPath, `- id: llm-pi-ai
+  name: '@deepseek-ai/dsh-llm-pi-ai'
+  inject: { stalePolicy: true }
+  isolate: { staleIsolation: true }
+  config:
+    providers:
+      stale: { apiKey: dormant-only }
+- insert:
+    - id: llm-pi-ai
+      name: '@deepseek-ai/dsh-llm-pi-ai'
+      config:
+        ownField: inserted
+        providers:
+          target-only: { models: [{ id: retained }] }
+`)
+  const preview = await f.sync.preview({ presets: false, overwrite: true })
+  await f.sync.import({ presets: false, overwrite: true, revision: preview.revision })
+  const raw = f.host.parse(f.context.patchPath) as PatchRow[]
+  assert.equal(raw[0]!.inject.stalePolicy, true, 'the dormant historical patch is preserved, not activated or deleted')
+  const inserted = insertedRows(raw, 'llm-pi-ai')
+  assert.equal(inserted.length, 1)
+  assert.equal(inserted[0]!.inject, undefined)
+  assert.equal(inserted[0]!.isolate, undefined)
+  const effective = f.host.compose([raw]).find(row => row.id === 'llm-pi-ai')!
+  assert.equal(effective.inject, undefined)
+  assert.equal(effective.isolate, undefined)
+  assert.equal((effective.config as PatchRow).ownField, 'inserted')
+  assert.equal((effective.config as PatchRow).providers.stale, undefined)
+  assert.equal((effective.config as PatchRow).providers['target-only'].models[0].id, 'retained')
+})
+
+test('shared home disabled state defeats the import before any write', async t => {
+  const f = await fixture(t)
+  await writeFile(f.context.patchPath, `- insert:
+    - id: target-preset-row
+      name: '@deepseek-ai/dsh-agent-preset'
+      config:
+        id: custom
+        plugins: []
+        targetField: old
+`)
+  await writeFile(join(f.home, 'cordis.patch.yml'), '- id: target-preset-row\n  disabled: true\n')
+  const before = await readFile(f.context.patchPath, 'utf8')
+  await assert.rejects(f.sync.preview({ models: false, overwrite: true }), /Shared home configuration/)
+  assert.equal(await readFile(f.context.patchPath, 'utf8'), before)
+  assert.equal((await readdir(f.context.dir)).some(name => name.includes('.bridge-backup-')), false)
+})
