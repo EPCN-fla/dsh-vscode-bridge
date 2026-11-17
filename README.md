@@ -23,7 +23,7 @@ ACP 是纯自动化接口，标题、删除、工作区分组、预设、权限�
 - **事件推送**：订阅方收到 plan/todo/标题/权限/指令生命周期等会话事件的 `bridge.event` 通知，类型过滤支持精确匹配与前缀匹配（`plan/`、`command/`）。
 - **原生斜杠指令**：列出会话生效的原生指令目录（`/compact`、`/plan` 等），并经 `ctx.commands.execute` 执行——与 TUI/Web 完全同一条路径，`command/run`、`command/done` 生命周期事件随推送到达。
 - **技能目录**：只读列出项目级与用户级技能（名称、描述、来源等稳定字段）；技能的真正调用由模型侧 skill 工具完成，目录已在 DSH 内注入。
-- **会话日志导出**：把会话（含子代理后代）的逻辑日志与引用附件流式打包为宿主侧 ZIP 文件——字节不经 ndjson 通道，大日志内存有界。
+- **会话日志导出**：把会话（默认包含子代理后代）的逻辑日志与引用附件流式打包为宿主侧 ZIP 文件——字节不经 ndjson 通道，大日志内存有界。
 - **能力如实上报**：`bridge.handshake` 报告当前部署真实可用的能力；某个可选服务缺失只降级对应方法族，插件整体不受影响。
 - **宿主版本告知**：握手与发现文件携带 `dshVersion`（宿主 DSH 版本，如 `0.1.7-rc.1`），扩展据此适配行为；无法探测时字段缺省而非猜测。
 
@@ -204,7 +204,7 @@ dsh plugin --profile acp-vscode add /absolute/path/to/dsh-vscode-bridge
 | `command.list` | `{ sessionId }` | `{ commands: [{ name, description, inputHint?, attachments? }] }`——该会话 agent 生效的原生指令目录（按名排序） |
 | `command.run` | `{ sessionId, line, timeoutMs? }` | `{ commandId, kind: 'success' \| 'error', text?, sourceEventSeq? }`——`line` 须以 `/` 开头；处理器级失败以 `kind:'error'+text` 返回，不作 RPC 错误 |
 | `skill.list` | `{ sessionId? }` | `{ skills: [{ name, description, whenToUse?, source, provider }] }`——传 `sessionId` 按会话头 cwd 解析项目级技能，否则用进程 cwd；无技能返回空数组 |
-| `session.exportZip` | `{ sessionId, destPath?, includeDescendants? }` | `{ path, fileName, bytes, entries }`——会话日志 ZIP 落盘到 `destPath`（缺省 `<tmpdir>/dsh-session-export/<fileName>`）；`includeDescendants` 缺省为 `true`（含子代理后代），恢复单根 transcript 时可传 `false`；活会话先做持久化屏障 |
+| `session.exportZip` | `{ sessionId, destPath?, includeDescendants?, temporary? }` | `{ path, fileName, bytes, entries }`——会话日志 ZIP 落盘到 `destPath`（缺省 `<tmpdir>/dsh-session-export/<fileName>`）；`includeDescendants` 缺省为 `true`（默认包含子代理后代），恢复单根 transcript 时可传 `false`；活会话先做持久化屏障 |
 
 会话行的 `parentSession` 与 `origin` 分别表示直接父会话和来源；`origin` 为 `"subagent"` 或 `null`，`capabilities.sessionOrigin` 标识此能力。`session.list` 的 `stored` 行通过 `sessionQuery.inspectSession` 在不恢复会话的情况下读取最新预设 projection；projection 不可用时省略 `agentPreset`，不再根据创建时 header 猜测。`session.get` 会折叠后续 `agent-preset/selected` 事件，返回最新预设。`preset.current` 在 projection 不可读时返回 `-32002`，并携带 `data.code: 'agent-preset/unavailable'`。
 
@@ -254,7 +254,7 @@ dsh plugin --profile acp-vscode add /absolute/path/to/dsh-vscode-bridge
 - **`agentPresets` 是可选服务**。缺少预设注册行时（`agent-preset-registry` + 声明行）插件照常加载；此时 `preset.*` 返回 `service-unavailable`，握手如实报告 `presets: false`。
 - **`dshVersion` 依赖可探测的安装事实**。依次尝试：启动器提供的 `profileContext.installAnchor`（走廊内宿主均提供）、`process.argv[1]` 的 CLI 入口（覆盖未提供 `profileContext` 的启动方式）、插件自身位置的模块解析（开发检出）。三者都不适用时（自建组合、部分打包宿主）字段缺省——扩展须把它当可选字段，不可假设默认值。
 - **`commands`/`skills`/`sessionExport` 同为可选能力**。ACP 组合缺对应服务行时插件照常装载，对应方法族返回 `service-unavailable`，握手能力位为 `false`；归档模块只在首次调用时动态解析，解析失败不影响插件装载。
-- **导出不走 Web 的 `/export` 指令**。该指令依赖 ACP 组合没有的 `connection` 服务；bridge 绕过指令层直接复用归档模块，由 `session.exportZip` 在宿主侧产出 ZIP 文件（含子代理后代日志），ZIP 字节不经 ndjson 通道。
+- **导出不走 Web 的 `/export` 指令**。该指令依赖 ACP 组合没有的 `connection` 服务；bridge 绕过指令层直接复用归档模块，由 `session.exportZip` 在宿主侧产出 ZIP 文件（默认包含子代理后代日志），ZIP 字节不经 ndjson 通道；唯一临时文件写完后再原子替换目标，失败不会截断或删除已有归档。
 - **`command.run` 仅限活会话且不带附件**。ACP 侧没有暂存回执通道，附件恒以空数组提交；指令声明需要附件时，上游错误文本原样透传为 `kind:'error'` 结果。忙会话不预检：compact 自报 `busy`、plan 返回 `queued`。
 - **`skill.list` 是只读目录**。技能的实际调用由模型侧 skill 工具完成（目录已在 DSH 内注入），bridge 不代替模型触发技能。
 - **拓扑 3（WSL 扩展宿主 → Windows 侧 dsh）不在 TCP 通道覆盖范围内**：Windows 进程发布的发现文件对 WSL 客户端不可达，该方向上 loopback 也不互通。

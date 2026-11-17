@@ -8,7 +8,7 @@
 
 import { randomBytes } from 'node:crypto'
 import { createWriteStream } from 'node:fs'
-import { mkdir, open, stat, unlink } from 'node:fs/promises'
+import { chmod, mkdir, open, rename, stat, unlink } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { Readable } from 'node:stream'
@@ -150,6 +150,12 @@ interface SubscriptionState {
   readonly types: readonly string[]
 }
 
+interface InflightOperation {
+  readonly controller: AbortController
+  readonly done: Promise<void>
+  readonly finish: () => void
+}
+
 /** Cast a wire string to the branded id; validation happened on lookup. */
 const asSessionId = (id: string): SessionId => id as SessionId
 
@@ -164,7 +170,7 @@ export class BridgeCore {
   private server: BridgeTcpServer | undefined
   private readonly subscriptions = new Map<number, SubscriptionState>()
   /** In-flight abortable RPC work (command executions, exports) per connection. */
-  private readonly inflight = new Map<number, Set<AbortController>>()
+  private readonly inflight = new Map<number, Set<InflightOperation>>()
   private readonly startedAt = new Date().toISOString()
   private stopping = false
   private startup: Promise<void> | undefined
@@ -258,7 +264,7 @@ export class BridgeCore {
       },
       onConnectionClosed: (connectionId) => {
         this.subscriptions.delete(connectionId)
-        this.abortInflight(connectionId)
+        void this.abortInflight(connectionId)
       },
     })
     try {
@@ -282,7 +288,7 @@ export class BridgeCore {
   private async stopOnce(): Promise<void> {
     await this.startup?.catch(() => {})
     this.subscriptions.clear()
-    for (const connectionId of [...this.inflight.keys()]) this.abortInflight(connectionId)
+    await Promise.all([...this.inflight.keys()].map(connectionId => this.abortInflight(connectionId)))
     await this.server?.stop()
     this.server = undefined
     await this.discovery.clear()
@@ -727,7 +733,7 @@ export class BridgeCore {
         { code: 'command/timeout' },
       ))
     }, timeoutMs)
-    this.trackInflight(connectionId, controller)
+    const operation = this.trackInflight(connectionId, controller)
     try {
       const aborted = new Promise<never>((_, reject) => {
         controller.signal.addEventListener('abort', () => reject(controller.signal.reason), { once: true })
@@ -761,7 +767,7 @@ export class BridgeCore {
       throw error
     } finally {
       clearTimeout(timer)
-      this.untrackInflight(connectionId, controller)
+      this.untrackInflight(operation)
     }
   }
 
@@ -808,31 +814,33 @@ export class BridgeCore {
     const sessionId = requireString(params, 'sessionId')
     const destPath = optionalString(params, 'destPath')
     const includeDescendants = optionalBoolean(params, 'includeDescendants') ?? true
-    const sessionQuery = this.requireService(this.deps.getSessionQuery(), 'sessionQuery')
-    const persistence = this.requireService(this.deps.sessionPersistence, 'sessionPersistence')
-    const archive = await this.sessionLogExportModule()
-    if (archive === undefined) {
-      throw new BridgeRpcError(
-        RPC_SERVICE_UNAVAILABLE,
-        'session export module "@deepseek-ai/dsh-session-log-export" is not resolvable in this deployment',
-        { code: 'service-unavailable', service: 'session-log-export' },
-      )
-    }
-    const id = asSessionId(sessionId)
-    // Mirrors upstream `sessionLogExportDeps(ctx)` from the injected/probed
-    // services; a missing attachment store still exports attachment-free logs
-    // and fails loud the moment a log actually references one.
-    const deps: SessionLogExportReady = {
-      sessionQuery,
-      sessionPersistence: persistence,
-      attachments: this.deps.getAttachments() ?? missingAttachments,
-      sessions: this.deps.sessions,
-    }
+    const temporary = optionalBoolean(params, 'temporary') ?? false
     const controller = new AbortController()
-    this.trackInflight(connectionId, controller)
-    let target: string | undefined
+    const operation = this.trackInflight(connectionId, controller)
+    let temporaryPath: string | undefined
     let completed = false
     try {
+      const sessionQuery = this.requireService(this.deps.getSessionQuery(), 'sessionQuery')
+      const persistence = this.requireService(this.deps.sessionPersistence, 'sessionPersistence')
+      const archive = await this.sessionLogExportModule()
+      if (archive === undefined) {
+        throw new BridgeRpcError(
+          RPC_SERVICE_UNAVAILABLE,
+          'session export module "@deepseek-ai/dsh-session-log-export" is not resolvable in this deployment',
+          { code: 'service-unavailable', service: 'session-log-export' },
+        )
+      }
+      controller.signal.throwIfAborted()
+      const id = asSessionId(sessionId)
+      // Mirrors upstream `sessionLogExportDeps(ctx)` from the injected/probed
+      // services; a missing attachment store still exports attachment-free logs
+      // and fails loud the moment a log actually references one.
+      const deps: SessionLogExportReady = {
+        sessionQuery,
+        sessionPersistence: persistence,
+        attachments: this.deps.getAttachments() ?? missingAttachments,
+        sessions: this.deps.sessions,
+      }
       // Durability barrier for a live session before its log is read; a cold
       // id has no in-memory work and the flush is a no-op.
       await archive.flushLiveSessionLog(deps, id, controller.signal)
@@ -841,10 +849,21 @@ export class BridgeCore {
         throw new BridgeRpcError(RPC_NOT_FOUND, `unknown session: ${sessionId}`, { code: 'session/not-found' })
       }
       const fileName = archive.sessionLogZipFilename(sessionId)
-      target = destPath ?? join(tmpdir(), 'dsh-session-export', fileName)
+      const defaultDir = join(tmpdir(), 'dsh-session-export')
+      if (destPath === undefined) {
+        await mkdir(defaultDir, { recursive: true, mode: 0o700 })
+        await chmod(defaultDir, 0o700)
+      }
+      const suffix = randomBytes(8).toString('hex')
+      const target = temporary
+        ? join(defaultDir, `restore-${suffix}-${fileName}`)
+        : destPath ?? join(defaultDir, fileName)
       await mkdir(dirname(target), { recursive: true })
+      temporaryPath = `${target}.part-${suffix}`
+      controller.signal.throwIfAborted()
       // The ZIP never touches the ndjson channel (no base64): bytes stream
-      // straight to the host file, so large logs stay bounded in memory.
+      // straight to a unique 0600 sibling file. The old target is never
+      // truncated or removed by a failed/concurrent export.
       const stream = archive.streamSessionLogZip(
         deps,
         rootContent,
@@ -853,21 +872,23 @@ export class BridgeCore {
         archive.DEFAULT_SESSION_LOG_COMPRESSION_LEVEL,
         controller.signal,
       )
-      await pipeline(Readable.fromWeb(stream), createWriteStream(target))
+      await pipeline(Readable.fromWeb(stream), createWriteStream(temporaryPath, { flags: 'wx', mode: 0o600 }))
+      const stats = await stat(temporaryPath)
+      await rename(temporaryPath, target)
       completed = true
-      const stats = await stat(target)
-      return { path: target, fileName, bytes: stats.size, entries: await zipEntryCount(target, stats.size) }
-    } catch (error: unknown) {
-      if (!completed && target !== undefined) {
-        await unlink(target).catch(() => {}) // never leave a truncated archive behind
+      return {
+        path: target, fileName, bytes: stats.size, entries: await zipEntryCount(target, stats.size),
+        ...(temporary ? { temporary: true } : {}),
       }
+    } catch (error: unknown) {
       if (error instanceof BridgeRpcError) throw error
       if (controller.signal.aborted) {
         throw new BridgeRpcError(RPC_SERVER_ERROR, `session export aborted: ${String(controller.signal.reason)}`, { code: 'session-export/aborted' })
       }
       throw error
     } finally {
-      this.untrackInflight(connectionId, controller)
+      if (!completed && temporaryPath !== undefined) await unlink(temporaryPath).catch(() => {})
+      this.untrackInflight(operation)
     }
   }
 
@@ -964,28 +985,33 @@ export class BridgeCore {
     return agent
   }
 
-  private trackInflight(connectionId: number, controller: AbortController): void {
+  private trackInflight(connectionId: number, controller: AbortController): InflightOperation {
+    let finish!: () => void
+    const done = new Promise<void>(resolve => { finish = resolve })
+    const operation: InflightOperation = { controller, done, finish }
     let set = this.inflight.get(connectionId)
     if (set === undefined) {
       set = new Set()
       this.inflight.set(connectionId, set)
     }
-    set.add(controller)
+    set.add(operation)
+    return operation
   }
 
-  private untrackInflight(connectionId: number, controller: AbortController): void {
-    const set = this.inflight.get(connectionId)
-    if (set === undefined) return
-    set.delete(controller)
-    if (set.size === 0) this.inflight.delete(connectionId)
+  private untrackInflight(operation: InflightOperation): void {
+    operation.finish()
+    for (const [connectionId, set] of this.inflight) {
+      if (set.delete(operation) && set.size === 0) this.inflight.delete(connectionId)
+    }
   }
 
-  /** Abort every in-flight RPC of one closed connection. */
-  private abortInflight(connectionId: number): void {
+  /** Abort every in-flight RPC of one closed connection and await its cleanup. */
+  private async abortInflight(connectionId: number): Promise<void> {
     const set = this.inflight.get(connectionId)
     if (set === undefined) return
     this.inflight.delete(connectionId)
-    for (const controller of set) controller.abort()
+    for (const operation of set) operation.controller.abort()
+    await Promise.allSettled([...set].map(operation => operation.done))
   }
 
   private requireService<T>(service: T | undefined, name: string): T {

@@ -5,10 +5,10 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { createConnection, type Socket } from 'node:net'
-import { mkdtemp, readFile, rm, stat, writeFile } from 'node:fs/promises'
+import { mkdtemp, readFile, readdir, rm, stat, writeFile } from 'node:fs/promises'
 import { existsSync, mkdtempSync } from 'node:fs'
 import { tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { basename, dirname, join } from 'node:path'
 import { BridgeCore, matchesEventType } from '../src/core.ts'
 import type { BridgeCoreDeps } from '../src/core.ts'
 import { DEFAULT_PUSH_TYPES } from '../src/protocol.ts'
@@ -1341,6 +1341,32 @@ test('session.exportZip probes the archive module once and flips the capability 
   })
 })
 
+
+test('disconnecting during the export module probe prevents flush and file creation', async () => {
+  let finishProbe!: () => void
+  let probeStarted = false
+  await withCore((deps, mocks) => {
+    mocks.exportLogs.set('s1', '{"type":"session"}\n')
+    const mutable = deps as unknown as Record<string, unknown>
+    mutable.sessionPersistence = { stat: async () => undefined }
+    mutable.loadSessionLogExport = () => {
+      probeStarted = true
+      return new Promise(resolve => { finishProbe = () => resolve(mocks.exportModule) })
+    }
+  }, async (core, mocks) => {
+    const client = new TestClient()
+    await client.connect(core.port as number)
+    void client.request('session.exportZip', { sessionId: 's1' })
+    await waitFor(() => probeStarted)
+    client.close()
+    await new Promise(resolve => setTimeout(resolve, 50))
+    finishProbe()
+    await new Promise(resolve => setTimeout(resolve, 50))
+    assert.equal(mocks.calls.exportFlushes.length, 0)
+    assert.equal(mocks.calls.exportStreams.length, 0)
+  })
+})
+
 test('session.exportZip removes the partial file when the stream fails mid-write', async () => {
   const root = await mkdtemp(join(tmpdir(), 'dsh-bridge-export-fail-'))
   try {
@@ -1354,6 +1380,77 @@ test('session.exportZip removes the partial file when the stream fails mid-write
       const exported = await client.request('session.exportZip', { sessionId: 'stream-fails', destPath })
       assert.equal((exported.error as { code: number }).code, -32603)
       assert.equal(existsSync(destPath), false, 'a truncated archive is never left behind')
+      client.close()
+    })
+  } finally {
+    await rm(root, { recursive: true, force: true })
+  }
+})
+
+
+test('session.exportZip preserves an existing target when the stream fails', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'dsh-bridge-export-preserve-'))
+  try {
+    await withCore((deps, mocks) => {
+      mocks.exportLogs.set('stream-fails', '{"type":"session"}\n')
+      ;(deps as unknown as Record<string, unknown>).sessionPersistence = { stat: async () => undefined }
+    }, async (core) => {
+      const client = new TestClient()
+      await client.connect(core.port as number)
+      const destPath = join(root, 'broken.zip')
+      await writeFile(destPath, 'previous-valid-archive')
+      const exported = await client.request('session.exportZip', { sessionId: 'stream-fails', destPath })
+      assert.equal((exported.error as { code: number }).code, -32603)
+      assert.equal(await readFile(destPath, 'utf8'), 'previous-valid-archive')
+      assert.deepEqual(await readdir(root), ['broken.zip'], 'no temporary part file remains')
+      client.close()
+    })
+  } finally {
+    await rm(root, { recursive: true, force: true })
+  }
+})
+
+test('temporary exports use unique 0600 files in a 0700 directory', async () => {
+  const produced: string[] = []
+  try {
+    await withCore((deps, mocks) => {
+      mocks.exportLogs.set('s1', '{"type":"session"}\n')
+      ;(deps as unknown as Record<string, unknown>).sessionPersistence = { stat: async () => undefined }
+    }, async (core) => {
+      const client = new TestClient()
+      await client.connect(core.port as number)
+      const first = await client.request('session.exportZip', { sessionId: 's1', temporary: true })
+      const second = await client.request('session.exportZip', { sessionId: 's1', temporary: true })
+      const a = first.result as { path: string; temporary: boolean }
+      const b = second.result as { path: string; temporary: boolean }
+      produced.push(a.path, b.path)
+      assert.equal(a.temporary, true)
+      assert.notEqual(a.path, b.path)
+      assert.ok(basename(a.path).startsWith('restore-'))
+      assert.equal((await stat(a.path)).mode & 0o777, 0o600)
+      assert.equal((await stat(dirname(a.path))).mode & 0o777, 0o700)
+      client.close()
+    })
+  } finally {
+    await Promise.all(produced.map(path => rm(path, { force: true })))
+  }
+})
+
+test('stop aborts an export and drains temporary-file cleanup', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'dsh-bridge-export-stop-'))
+  try {
+    await withCore((deps, mocks) => {
+      mocks.exportLogs.set('never-ends', '{"type":"session"}\n')
+      ;(deps as unknown as Record<string, unknown>).sessionPersistence = { stat: async () => undefined }
+    }, async (core, mocks) => {
+      const client = new TestClient()
+      await client.connect(core.port as number)
+      const destPath = join(root, 'aborted.zip')
+      void client.request('session.exportZip', { sessionId: 'never-ends', destPath })
+      await waitFor(() => mocks.calls.exportStreams.length === 1)
+      await core.stop()
+      assert.equal(existsSync(destPath), false)
+      assert.deepEqual(await readdir(root), [], 'stop returns only after the part file is removed')
       client.close()
     })
   } finally {
