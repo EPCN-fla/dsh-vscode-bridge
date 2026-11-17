@@ -22,7 +22,7 @@
  *    sessions from ordinary forks.
  *
  * Discovery: the listener seat (host/port) plus a bearer token are written to
- * `$HOME/.dsh/vscode-bridge/<pid>.json` (mode 0600) and removed on unload;
+ * `$DSH_HOME/vscode-bridge/<pid>.json` (mode 0600) and removed on unload;
  * the extension matches an instance via the payload's `directories` list.
  *
  * @module dsh-vscode-bridge
@@ -73,7 +73,7 @@ export interface BridgePluginConfig {
   token?: string
   /**
    * Directory holding the `<pid>.json` discovery file. Defaults to
-   * `$HOME/.dsh/vscode-bridge`.
+   * `$DSH_HOME/vscode-bridge`.
    */
   discoveryDir?: string
   /** Attach new sessions to their cwd's workspace on `session/created`. */

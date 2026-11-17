@@ -31,7 +31,7 @@ ACP 是纯自动化接口，标题、删除、工作区分组、预设、权限�
 
 ```mermaid
 flowchart LR
-    Ext[dsh-vscode 扩展] -->|扫描匹配 directories| Disc[~/.dsh/vscode-bridge/<pid>.json<br/>权限 0600]
+    Ext[dsh-vscode 扩展] -->|扫描匹配 directories| Disc[$DSH_HOME/vscode-bridge/<pid>.json<br/>权限 0600]
     Ext -->|ndjson JSON-RPC 2.0| Tcp[Loopback 监听器<br/>7310-7319 首个空闲端口]
     Tcp --> Auth{token 校验}
     Auth -->|失败| Reject[-32001 unauthorized]
@@ -42,7 +42,7 @@ flowchart LR
 ```
 
 1. 插件绑定配置区间内第一个空闲端口，多个 DSH 进程（每个编辑器窗口一个）无需协调即可共存。
-2. 插件把 `{ port, token, pid, protocolVersion, dshVersion?, capabilities, directories }` 写入 `$HOME/.dsh/vscode-bridge/<pid>.json`（0600，原子写），`directories` 列出进程 cwd、每个活会话 cwd 和每个已知工作区路径供扩展匹配实例；卸载时删除，启动时按 pid 活性回收历史残留。工作区目录不再被写入。
+2. 插件把 `{ port, token, pid, protocolVersion, dshVersion?, capabilities, directories }` 写入 `$DSH_HOME/vscode-bridge/<pid>.json`（0600，原子写；未设置 `DSH_HOME` 时根目录为 `~/.dsh`），`directories` 列出进程 cwd、每个活会话 cwd 和每个已知工作区路径供扩展匹配实例；卸载时删除，启动时按 pid 活性回收历史残留。工作区目录不再被写入。
 3. 每个请求都必须在顶层 `token` 字段携带令牌；loopback + 文件权限就是全部访问边界。
 4. 借助 WSL2 的 `localhostForwarding`，Windows 侧的扩展可以透明地连上 WSL 侧的监听器。
 
@@ -52,6 +52,7 @@ flowchart LR
 
 | 插件版本 | 最低适配的 DSH 版本 | 最高适配的 DSH 版本 |
 | --- | --- | --- |
+| 0.5.4 | 0.2.2-rc.2 | 0.2.2-rc.3 |
 | 0.5.3 | 0.2.2-rc.2 | 0.2.2-rc.3 |
 | 0.5.2 | 0.2.2-rc.2 | 0.2.2-rc.3 |
 | 0.5.1 | 0.2.2-rc.2 | 0.2.2-rc.2 |
@@ -218,7 +219,7 @@ dsh plugin --profile acp-vscode add /absolute/path/to/dsh-vscode-bridge
 
 1. 调用 `config.preview`，参数 `{ models: true, presets: true, overwrite: false }`（这也是默认值）。响应包含 `{ source, target, revision, providers, presets, skipped, supportRows, changed, restartRequired }`，只列标识符，不返回模型配置、密钥或表达式。
 2. 用户确认后，用**相同选项**调用 `config.import` 并携带预览返回的 `revision`。文件或选项发生变化时返回 `-32009 config/stale-preview`，需要重新预览。
-3. 写入成功返回相同摘要与可选 `backupPath`。请重启目标 ACP/bridge 进程；现有会话不会被自动切换模型或预设，也不保证热加载。再次导入未变化的配置不会重复追加。
+3. 写入成功返回相同摘要与可选 `backupPath`。请重启目标 ACP/bridge 进程；现有会话不会被自动切换模型或预设，也不保证热加载。再次导入未变化的配置不会重复追加；连续覆盖会原地更新用户插入行，并合并清理历史 override，不会在尾部累积重复 patch。
 
 ```jsonc
 { "id": 1, "method": "config.preview", "token": "<bridge-token>",
@@ -242,7 +243,7 @@ dsh plugin --profile acp-vscode add /absolute/path/to/dsh-vscode-bridge
 | `host` | `127.0.0.1` | 绑定地址。保持 loopback——发现文件令牌就是访问边界 |
 | `portStart` / `portEnd` | `7310` / `7319` | 候选端口区间；第一个空闲端口胜出 |
 | `token` | 每次启动随机 | 固定令牌，需要可复现性多于卫生性时使用 |
-| `discoveryDir` | `$HOME/.dsh/vscode-bridge` | 发现目录，内含 `<pid>.json` |
+| `discoveryDir` | `$DSH_HOME/vscode-bridge` （未设置时为 `~/.dsh/vscode-bridge`） | 发现目录，内含 `<pid>.json` |
 | `attachSessions` | `true` | 在 `session/created` 时把新会话 attach 到其 cwd 的工作区 |
 | `commandTimeoutMs` | `180000` | `command.run` 执行超时；到点 abort 在途指令并返回 `command/timeout`（compact 需一次 LLM 摘要，默认给足 3 分钟） |
 

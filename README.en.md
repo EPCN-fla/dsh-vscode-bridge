@@ -31,7 +31,7 @@ This plugin closes that gap from inside the harness process: a loopback TCP list
 
 ```mermaid
 flowchart LR
-    Ext[dsh-vscode extension] -->|scans, matches directories| Disc[~/.dsh/vscode-bridge/<pid>.json<br/>mode 0600]
+    Ext[dsh-vscode extension] -->|scans, matches directories| Disc[$DSH_HOME/vscode-bridge/<pid>.json<br/>mode 0600]
     Ext -->|ndjson JSON-RPC 2.0| Tcp[Loopback listener<br/>first free port 7310-7319]
     Tcp --> Auth{token valid?}
     Auth -->|no| Reject[-32001 unauthorized]
@@ -42,7 +42,7 @@ flowchart LR
 ```
 
 1. The plugin binds the first free port in its configured range, so several harness processes (one per editor window) coexist without coordination.
-2. It publishes `{ port, token, pid, protocolVersion, dshVersion?, capabilities, directories }` as `$HOME/.dsh/vscode-bridge/<pid>.json` (mode 0600, atomic write); `directories` lists the process cwd, every live session cwd, and every known workspace path so the extension can match its instance. The file is removed on unload, and stale entries are reaped on startup via pid liveness. Workspace directories are no longer written to.
+2. It publishes `{ port, token, pid, protocolVersion, dshVersion?, capabilities, directories }` as `$DSH_HOME/vscode-bridge/<pid>.json` (mode 0600, atomic write; uses `~/.dsh` when `DSH_HOME` is unset); `directories` lists the process cwd, every live session cwd, and every known workspace path so the extension can match its instance. The file is removed on unload, and stale entries are reaped on startup via pid liveness. Workspace directories are no longer written to.
 3. Every request carries the token in a top-level `token` field; loopback plus file permissions are the whole access boundary.
 4. WSL2's `localhostForwarding` lets a Windows-side extension reach a WSL-side listener transparently.
 
@@ -52,6 +52,7 @@ The correspondence matrix between plugin versions and DSH versions is as follows
 
 | Plugin version | Minimum compatible DSH version | Highest compatible DSH version |
 | --- | --- | --- |
+| 0.5.4 | 0.2.2-rc.2 | 0.2.2-rc.3 |
 | 0.5.3 | 0.2.2-rc.2 | 0.2.2-rc.3 |
 | 0.5.2 | 0.2.2-rc.2 | 0.2.2-rc.3 |
 | 0.5.1 | 0.2.2-rc.2 | 0.2.2-rc.2 |
@@ -222,7 +223,7 @@ The current source exposes `config.preview` / `config.import`, importing from `w
 
 1. Call `config.preview` with `{ models: true, presets: true, overwrite: false }` (the defaults). It returns `{ source, target, revision, providers, presets, skipped, supportRows, changed, restartRequired }`: identifiers only, never model configurations, credentials or expressions.
 2. After user confirmation, call `config.import` with the **same options** and the returned `revision`. Changed files or options return `-32009 config/stale-preview`; preview again.
-3. A successful write returns the summary and optional `backupPath`. Restart the target ACP/bridge process. Existing sessions are not switched automatically, and hot reload is not guaranteed. Importing unchanged configuration again does not append duplicates.
+3. A successful write returns the summary and optional `backupPath`. Restart the target ACP/bridge process. Existing sessions are not switched automatically, and hot reload is not guaranteed. Importing unchanged configuration again does not append duplicates. Repeated overwrites edit user insertions in place and coalesce legacy overrides instead of growing tail patches.
 
 ```jsonc
 { "id": 1, "method": "config.preview", "token": "<bridge-token>",
@@ -246,7 +247,7 @@ The current source exposes `config.preview` / `config.import`, importing from `w
 | `host` | `127.0.0.1` | Bind address. Keep loopback — the discovery-file token is the access boundary. |
 | `portStart` / `portEnd` | `7310` / `7319` | Candidate port range; the first free port wins. |
 | `token` | random per boot | Fixed bearer token, when reproducibility matters more than hygiene. |
-| `discoveryDir` | `$HOME/.dsh/vscode-bridge` | Discovery directory holding `<pid>.json`. |
+| `discoveryDir` | `$DSH_HOME/vscode-bridge` (`~/.dsh/vscode-bridge` when unset) | Discovery directory holding `<pid>.json`. |
 | `attachSessions` | `true` | Attach new sessions to their cwd's workspace on `session/created`. |
 | `commandTimeoutMs` | `180000` | `command.run` execution timeout; the in-flight command aborts past it and the RPC answers `command/timeout` (compact needs one LLM summarization, hence the generous default). |
 
