@@ -35,6 +35,8 @@ import type { BridgeTransportLogger } from './server.ts'
 export interface ProfileContextSlice {
   /** Absolute path of the owning dsh app's package.json. */
   readonly installAnchor?: string
+  /** Launcher-resolved absolute DSH home, when the host provides it. */
+  readonly home?: string
 }
 
 export interface DetectDshVersionOptions {

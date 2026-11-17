@@ -5,7 +5,7 @@ import { mkdtemp, readFile, rm, stat, writeFile } from 'node:fs/promises'
 import { existsSync } from 'node:fs'
 import { spawn } from 'node:child_process'
 import { tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { join, resolve } from 'node:path'
 import { defaultDiscoveryDir, DiscoveryFile } from '../src/discovery.ts'
 import { BRIDGE_PLUGIN_NAME, type DiscoveryFilePayload } from '../src/protocol.ts'
 
@@ -129,8 +129,15 @@ test('publish into an uncreatable directory rejects (core turns it into a warnin
   await rm(root, { recursive: true, force: true })
 })
 
-test('default discovery follows DSH_HOME and falls back to the user home', () => {
+test('default discovery follows the launcher home and host-compatible fallbacks', () => {
   assert.equal(defaultDiscoveryDir({ DSH_HOME: '/custom/dsh-home' }, '/unused'), join('/custom/dsh-home', 'vscode-bridge'))
   assert.equal(defaultDiscoveryDir({}, '/home/test-user'), join('/home/test-user', '.dsh', 'vscode-bridge'))
-  assert.equal(defaultDiscoveryDir({ DSH_HOME: '' }, '/home/test-user'), join('/home/test-user', '.dsh', 'vscode-bridge'))
+  for (const blank of ['', '   ']) {
+    assert.equal(defaultDiscoveryDir({ DSH_HOME: blank }, '/home/test-user'), join('/home/test-user', '.dsh', 'vscode-bridge'))
+  }
+  assert.equal(defaultDiscoveryDir({ DSH_HOME: '~' }, '/home/test-user'), join('/home/test-user', 'vscode-bridge'))
+  assert.equal(defaultDiscoveryDir({ DSH_HOME: '~/custom' }, '/home/test-user'), join('/home/test-user', 'custom', 'vscode-bridge'))
+  assert.equal(defaultDiscoveryDir({ DSH_HOME: '~\\custom' }, '/home/test-user'), join('/home/test-user', 'custom', 'vscode-bridge'))
+  assert.equal(defaultDiscoveryDir({ DSH_HOME: 'relative-home' }, '/unused'), join(resolve('relative-home'), 'vscode-bridge'))
+  assert.equal(defaultDiscoveryDir({ DSH_HOME: '/wrong' }, '/unused', '/launcher/resolved'), join('/launcher/resolved', 'vscode-bridge'))
 })

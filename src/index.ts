@@ -106,7 +106,7 @@ export function apply(ctx: Context, config: BridgePluginConfig): void {
     portStart: config.portStart ?? 7310,
     portEnd: config.portEnd ?? 7319,
     token: config.token ?? randomToken(),
-    discoveryDir: config.discoveryDir ?? defaultDiscoveryDir(),
+    discoveryDir: config.discoveryDir ?? defaultDiscoveryDir(process.env, undefined, ctx.get('profileContext')?.home),
     attachSessions: config.attachSessions ?? true,
     commandTimeoutMs: config.commandTimeoutMs ?? 180000,
   }
