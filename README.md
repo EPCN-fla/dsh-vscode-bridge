@@ -52,6 +52,7 @@ flowchart LR
 
 | 插件版本 | 最低适配的 DSH 版本 | 最高适配的 DSH 版本 |
 | --- | --- | --- |
+| 0.5.5 | 0.2.2-rc.2 | 0.2.2-rc.5 |
 | 0.5.4 | 0.2.2-rc.2 | 0.2.2-rc.3 |
 | 0.5.3 | 0.2.2-rc.2 | 0.2.2-rc.3 |
 | 0.5.2 | 0.2.2-rc.2 | 0.2.2-rc.3 |
@@ -64,7 +65,7 @@ flowchart LR
 | 0.2.x | 0.1.5-rc.2 | 0.1.7-rc.1 |
 | 0.1.x | 0.1.5-rc.2 | 0.1.5-rc.2 |
 
-插件未在 `peerDependencies` 声明 DSH 包，因此不受 peer 版本强制约束——0.1.7 的安装/启动检查（DSH-0.1.7-J1-01）与 0.2.0 新增的 profile 组合期兼容预审（不满足 `@deepseek-ai/dsh*` peer 的行会被禁用，可用 `dsh plugin allow-version` 授予精确版本豁免）都只检查声明了 DSH peer 的插件。
+插件在 `peerDependencies` 中为实际消费的 DSH 包统一声明 `>=0.2.2-rc.2 <0.2.2`。0.1.7 的安装/启动检查（DSH-0.1.7-J1-01）与 0.2.0 新增的 profile 组合期兼容预审都会检查这些 peer；区间外宿主会判定为不兼容（可用 `dsh plugin allow-version` 授予精确版本豁免）。`@deepseek-ai/dsh-session-log-export` 是 optional peer，无法解析时仅 `session.exportZip` 降级为 `service-unavailable`，不影响插件加载。
 
 插件要装进一个同时携带 `dsh-base` 与 `dsh-acp-app` 两个 bundle 的自建 profile。旧版 DSH 不带现成的 acp profile（0.2.1 已提供 `acp` 模板）；`dsh plugin` 初始化出的任意自建 profile 仍只有 `dsh-base`，需要手动补上 `dsh-acp-app` bundle，以及 ACP 组合没有的几行服务（`workspace`、预设注册行，外加 `standard` 预设挂载所需的子代理模型路由宿主行）。预设注册行在走廊内不变：0.1.7 起预设为声明式（DSH-0.1.7-J1-03），注册行是 `agent-preset-registry`（`@deepseek-ai/dsh-agent-preset-registry`，`config: { default: standard }`），每个预设另需一条 `@deepseek-ai/dsh-agent-preset` 声明行（可参考 web-app bundle 的 `presets/*.patch.yml`，其行形状在 0.1.7 与 0.2.0 间逐字一致）。该服务未挂载时桥接照常加载，`presets` 能力降级为不可用。
 
@@ -263,7 +264,7 @@ dsh plugin --profile acp-vscode add /absolute/path/to/dsh-vscode-bridge
 
 ## 开发
 
-要求 Node `>=24.9.0`（与 DSH `0.2.2-rc.2`、`0.2.2-rc.3` 的 engine 对齐）；开发、CI 与真实 Host smoke 均只使用 Node 24。
+要求 Node `>=24.9.0`（与 DSH `0.2.2-rc.2` 至 `0.2.2-rc.5` 的 engine 对齐）；开发、CI 与真实 Host smoke 均只使用 Node 24。
 
 ```sh
 pnpm install --no-frozen-lockfile
@@ -274,7 +275,7 @@ pnpm run build       # 产出 lib/ 与 lib/types/
 
 ### CI 触发与报告
 
-普通分支推送不触发 CI。PR 创建、更新或重新打开时，由准备 job 读取 [package.json](<package.json>) 的 `dshCompatibility`，按声明的 DSH 版本动态创建验证 job。当前目标为 DSH `0.2.2-rc.2` 与 `0.2.2-rc.3`，每个目标均仅在 Node 24 上执行类型检查、测试、构建和精确宿主导入 smoke。失败仍会令对应 job 失败，并在 Actions Summary 中记录 Node 状态与测试统计；日志和临时 tarball 仅留在 runner，不上传 artifacts，不创建 GitHub Release。
+普通分支推送不触发 CI。PR 创建、更新或重新打开时，由准备 job 读取 [package.json](<package.json>) 的 `dshCompatibility`，按声明的 DSH 版本动态创建验证 job。当前目标为 DSH `0.2.2-rc.2` 至 `0.2.2-rc.5`，每个目标均仅在 Node 24 上执行类型检查、测试、构建和精确宿主导入 smoke。失败仍会令对应 job 失败，并在 Actions Summary 中记录 Node 状态与测试统计；日志和临时 tarball 仅留在 runner，不上传 artifacts，不创建 GitHub Release。
 
 支持版本仅在 [package.json](<package.json>) 的 `dshCompatibility` 维护：键为精确 DSH 版本，值的 `cordis` 为该宿主对应的 Cordis 开发依赖版本（精确版本或 `~` 范围）。例如 `"0.2.1-rc.2": { "cordis": "~4.0.5" }`。新增/删除对应条目即可调整矩阵，无需修改 CI YAML 或脚本；验证 job 会将全部 DSH 开发依赖切换到所选版本。`devDependencies` 仍是本地开发默认版本，不代表完整支持列表。此字段是本插件的测试元数据，不是 DSH 官方安装兼容声明；空声明或非法版本会使准备 job 失败。
 

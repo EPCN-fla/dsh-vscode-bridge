@@ -52,6 +52,7 @@ The correspondence matrix between plugin versions and DSH versions is as follows
 
 | Plugin version | Minimum compatible DSH version | Highest compatible DSH version |
 | --- | --- | --- |
+| 0.5.5 | 0.2.2-rc.2 | 0.2.2-rc.5 |
 | 0.5.4 | 0.2.2-rc.2 | 0.2.2-rc.3 |
 | 0.5.3 | 0.2.2-rc.2 | 0.2.2-rc.3 |
 | 0.5.2 | 0.2.2-rc.2 | 0.2.2-rc.3 |
@@ -64,7 +65,7 @@ The correspondence matrix between plugin versions and DSH versions is as follows
 | 0.2.x | 0.1.5-rc.2 | 0.1.7-rc.1 |
 | 0.1.x | 0.1.5-rc.2 | 0.1.5-rc.2 |
 
-The plugin declares no DSH package in `peerDependencies`, so peer enforcement does not gate it — neither the 0.1.7 install/startup checks (DSH-0.1.7-J1-01) nor the composition-time compatibility preflight added in 0.2.0 (which disables rows whose declared `@deepseek-ai/dsh*` peers are unsatisfied; `dsh plugin allow-version` grants an exact-version exemption) looks at plugins without DSH peers.
+The plugin declares `>=0.2.2-rc.2 <0.2.2` for every consumed DSH package in `peerDependencies`. Both the 0.1.7 install/startup checks (DSH-0.1.7-J1-01) and the composition-time compatibility preflight added in 0.2.0 enforce these peers; hosts outside the corridor are incompatible unless granted an exact-version exemption with `dsh plugin allow-version`. `@deepseek-ai/dsh-session-log-export` is an optional peer: when it cannot be resolved, only `session.exportZip` degrades to `service-unavailable`, without affecting plugin load.
 
 The plugin must be loaded into a custom profile carrying both the `dsh-base` and `dsh-acp-app` bundles. Older DSH versions ship no ready-made acp profile (0.2.1 provides an `acp` template); an arbitrary custom profile initialized by `dsh plugin` still starts with `dsh-base` only, so you add the `dsh-acp-app` bundle by hand, plus the service rows the ACP composition does not ship (`workspace`, the preset-registry row, and the subagent model-route host row the `standard` preset mounts). The preset-registry row is stable across the corridor: presets are declarative since 0.1.7 (DSH-0.1.7-J1-03) — the registry row is `agent-preset-registry` (`@deepseek-ai/dsh-agent-preset-registry`, `config: { default: standard }`) and each preset needs its own `@deepseek-ai/dsh-agent-preset` declaration row (see the web-app bundle's `presets/*.patch.yml`, byte-identical between 0.1.7 and 0.2.0). Without the service the bridge still loads; its `presets` capability reports unavailable.
 
@@ -267,7 +268,7 @@ The current source exposes `config.preview` / `config.import`, importing from `w
 
 ## Development
 
-Requires Node `>=24.9.0`, matching the DSH `0.2.2-rc.2` and `0.2.2-rc.3` engines. Development, CI, and real-Host smoke tests use Node 24 only.
+Requires Node `>=24.9.0`, matching the DSH `0.2.2-rc.2` through `0.2.2-rc.5` engines. Development, CI, and real-Host smoke tests use Node 24 only.
 
 ```sh
 pnpm install --no-frozen-lockfile
@@ -278,7 +279,7 @@ pnpm run build       # emit lib/ + lib/types/
 
 ### CI triggers and reports
 
-Ordinary branch pushes do not trigger CI. Opening, updating or reopening a PR runs a preparation job that reads `dshCompatibility` from [package.json](<package.json>) and generates one verification job per declared DSH version. The current targets are DSH `0.2.2-rc.2` and `0.2.2-rc.3`, each verified only on Node 24 with typechecking, tests, build, and exact-host import smoke. A failure fails its job and is recorded with test counts in Actions Summary. Logs and temporary tarballs stay on the runner; no artifacts are uploaded and no GitHub Release is created.
+Ordinary branch pushes do not trigger CI. Opening, updating or reopening a PR runs a preparation job that reads `dshCompatibility` from [package.json](<package.json>) and generates one verification job per declared DSH version. The current targets are DSH `0.2.2-rc.2` through `0.2.2-rc.5`, each verified only on Node 24 with typechecking, tests, build, and exact-host import smoke. A failure fails its job and is recorded with test counts in Actions Summary. Logs and temporary tarballs stay on the runner; no artifacts are uploaded and no GitHub Release is created.
 
 Maintain supported versions only in `dshCompatibility` in [package.json](<package.json>): each key is an exact DSH version; its `cordis` value is the matching Cordis development dependency (exact or tilde range), for example `"0.2.1-rc.2": { "cordis": "~4.0.5" }`. Add or remove entries without editing CI YAML or scripts. Verification jobs select all DSH development dependencies together. `devDependencies` remains the local development baseline, not the full compatibility list. This is plugin-owned test metadata, not an official DSH install-compatibility declaration. Empty or invalid declarations fail the preparation job.
 

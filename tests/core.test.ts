@@ -789,6 +789,44 @@ test('subscribers receive matching session events only', async () => {
   })
 })
 
+test('rc.4 and rc.5 event payloads pass through explicit subscriptions without classification', async () => {
+  await withCore((deps, mocks) => {
+    mocks.live.set('s1', makeSession('s1', '/tmp/project'))
+    void deps
+  }, async (core, mocks) => {
+    const client = new TestClient()
+    await client.connect(core.port as number)
+    await client.request('session.subscribe', { sessionId: 's1', types: ['turn/end', 'web/'] })
+    const s1 = mocks.live.get('s1')
+    assert.notEqual(s1, undefined)
+    const events = [
+      // DSH rc.4 reports DeepSeek refusals with CONTENT_REFUSED in turn/end.
+      { type: 'turn/end', seq: 12, time: 4, data: {
+        turn: 1,
+        reason: { kind: 'error', error: { code: 'CONTENT_REFUSED', message: 'content refused' } },
+      } },
+      // DSH rc.5's default Messages search adds this informational event.
+      { type: 'web/deepseek-search-llm-request', seq: 13, time: 5, data: {
+        endpoint: 'https://api.deepseek.com/anthropic/v1/messages',
+        apiVersion: '2023-06-01',
+        body: {
+          model: 'deepseek-v4-flash',
+          max_tokens: 4096,
+          messages: [{ role: 'user', content: [{ type: 'text', text: 'DSH rc.5' }] }],
+          tools: [{ type: 'web_search_20250305', name: 'web_search', max_uses: 5 }],
+          thinking: { type: 'disabled' },
+        },
+      } },
+    ]
+    for (const event of events) core.handleSessionEvent(s1 as never, event as never)
+    for (const event of events) {
+      const notification = await client.nextNotification()
+      assert.deepEqual(notification.params, { kind: 'session/event', sessionId: 's1', event })
+    }
+    client.close()
+  })
+})
+
 test('session.subscribe treats an empty types list as the default set', async () => {
   await withCore((deps, mocks) => {
     mocks.live.set('s1', makeSession('s1', '/tmp/project'))

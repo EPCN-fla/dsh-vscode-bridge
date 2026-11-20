@@ -5,7 +5,11 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { spawnSync } from 'node:child_process'
+import { createRequire } from 'node:module'
 
+const semver = createRequire(import.meta.url)('semver') as {
+  satisfies(version: string, range: string, options: { includePrerelease: boolean }): boolean
+}
 const script = fileURLToPath(new URL('../scripts/ci-compatibility.mjs', import.meta.url))
 const fixture = () => ({ name: 'fixture', version: '0.4.0', custom: { untouched: true },
   dshCompatibility: { '9.8.7-rc.1': { cordis: '~4.0.5' }, '10.0.0': { cordis: '~5.1.0', node: [24],
@@ -73,7 +77,7 @@ test('missing, empty and invalid declarations fail rather than silently skipping
   }
 })
 
-test('repository manifest pins both supported DSH cohorts to Node 24', async () => {
+test('repository manifest pins every supported DSH cohort to Node 24', async () => {
   const root = fileURLToPath(new URL('..', import.meta.url))
   const manifest = JSON.parse(await readFile(join(root, 'package.json'), 'utf8'))
   const result = spawnSync(process.execPath, [script, 'matrix'], { cwd: root, env: { ...process.env, GITHUB_OUTPUT: '' }, encoding: 'utf8' })
@@ -81,7 +85,28 @@ test('repository manifest pins both supported DSH cohorts to Node 24', async () 
   assert.deepEqual(JSON.parse(result.stdout), { include: [
     { 'dsh-version': '0.2.2-rc.2', node: [24] },
     { 'dsh-version': '0.2.2-rc.3', node: [24] },
+    { 'dsh-version': '0.2.2-rc.4', node: [24] },
+    { 'dsh-version': '0.2.2-rc.5', node: [24] },
   ] })
   assert.equal(manifest.engines.node, '>=24.9.0')
   assert.equal(manifest.peerDependencies['@deepseek-ai/cordis'], '^4.1.0')
+})
+
+test('every DSH peer admits the audited rc.2 through rc.5 corridor and refuses the final release', async () => {
+  const root = fileURLToPath(new URL('..', import.meta.url))
+  const manifest = JSON.parse(await readFile(join(root, 'package.json'), 'utf8'))
+  const dshPeers = Object.entries(manifest.peerDependencies).filter(([name]) =>
+    name === '@deepseek-ai/dsh' || name.startsWith('@deepseek-ai/dsh-')) as [string, string][]
+  const developmentCohort = Object.keys(manifest.devDependencies).filter(name => name.startsWith('@deepseek-ai/dsh-'))
+  assert.deepEqual(dshPeers.map(([name]) => name), developmentCohort)
+  assert.equal(manifest.peerDependenciesMeta['@deepseek-ai/dsh-session-log-export'].optional, true)
+  for (const [name, range] of dshPeers) {
+    assert.equal(range, '>=0.2.2-rc.2 <0.2.2', name)
+    for (const version of ['0.2.2-rc.2', '0.2.2-rc.3', '0.2.2-rc.4', '0.2.2-rc.5', '0.2.2-rc.6']) {
+      assert.equal(semver.satisfies(version, range, { includePrerelease: true }), true, `${name} must admit ${version}`)
+    }
+    for (const version of ['0.2.1-rc.5', '0.2.2-rc.1', '0.2.2', '0.3.0']) {
+      assert.equal(semver.satisfies(version, range, { includePrerelease: true }), false, `${name} must refuse ${version}`)
+    }
+  }
 })

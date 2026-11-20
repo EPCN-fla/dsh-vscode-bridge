@@ -48,10 +48,10 @@ import {
 import { BridgeTcpServer, type BridgeTransportLogger } from './server.ts'
 
 /**
- * The lazily imported `@deepseek-ai/dsh-session-log-export` module. It is a
- * devDependency for types only and deliberately absent from peerDependencies:
- * a deployment that cannot resolve it degrades `session.exportZip` to
- * `service-unavailable` without affecting plugin load.
+ * The lazily imported `@deepseek-ai/dsh-session-log-export` module. It is an
+ * optional peer (and a devDependency for types): a deployment that cannot
+ * resolve it degrades `session.exportZip` to `service-unavailable` without
+ * affecting plugin load.
  */
 type SessionLogExportModule = typeof import('@deepseek-ai/dsh-session-log-export')
 /** Service bag the archive helpers read, sourced from injected/probed deps. */
